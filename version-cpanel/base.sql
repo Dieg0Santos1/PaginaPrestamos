@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS registro (
+  id SMALLINT UNSIGNED PRIMARY KEY,
+  revision BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  datos MEDIUMTEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT IGNORE INTO registro (id, datos) VALUES (1, '{"loans":[],"friends":[]}');
+
