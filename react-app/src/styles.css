@@ -14,6 +14,15 @@
 .buttons button,.section-head button{min-height:40px}
 .consent-line{display:flex;align-items:flex-start;gap:10px;font-weight:500;line-height:1.4}
 .consent-line input{flex:none;width:18px;height:18px;min-height:18px;margin:2px 0 0;accent-color:#087b66}
+.loan-list{padding:0;border:0;background:transparent}
+.loan-accordion{margin-bottom:12px;border:1px solid #dce7e8;border-radius:14px;background:#fff;overflow:hidden}
+.loan-accordion summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px;cursor:pointer;list-style:none;font-weight:700}
+.loan-accordion summary::-webkit-details-marker{display:none}
+.loan-accordion summary:hover{background:#f7fafb}
+.loan-accordion summary:focus-visible{outline:3px solid #f5ad42;outline-offset:-3px}
+.loan-accordion summary strong{white-space:nowrap}
+.loan-accordion[open] summary{border-bottom:1px solid #dce7e8}
+.loan-accordion-body{padding:12px 20px 20px}
 
 @media(max-width:1000px){
   .scroll-table{overflow:visible}
@@ -46,6 +55,9 @@
   .modal{padding:16px}
   input,select{min-height:44px}
   .scroll-table td{grid-template-columns:minmax(88px,34%) minmax(0,1fr)}
+  .loan-accordion summary{align-items:flex-start;flex-direction:column;gap:6px;padding:16px}
+  .loan-accordion summary strong{white-space:normal}
+  .loan-accordion-body{padding:8px 12px 12px}
 }
 @media(max-width:420px){
   .metrics{grid-template-columns:1fr}
