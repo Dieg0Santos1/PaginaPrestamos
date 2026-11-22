@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, opening, paymentsOf, remaining, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
+import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, opening, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
 
 const empty = {loans:[], friends:[]};
 const key = 'mis-prestamos-v1';
@@ -283,6 +283,8 @@ export default function App() {
       </section>}
       {route==='morosidad'&&<section><h2>Morosidad</h2><p>Saldo vencido <strong>{money(sum(overdue,item=>item.left))}</strong></p><Table headers={['Cliente','Cuotas vencidas','Vencimiento más antiguo','Saldo vencido']} rows={[...overdue.reduce((groups,item)=>{const group=groups.get(item.loan.person)??{count:0,total:0,first:item.date};group.count++;group.total+=item.left;groups.set(item.loan.person,group);return groups;},new Map())].map(([person,group])=>[person,group.count,dateFormat(group.first),money(group.total)])} emptyText="No hay cuotas vencidas."/></section>}
       {route==='reportes'&&<section className="loan-list" aria-label="Detalle de préstamos">
+        <div className="report-actions"><button type="button" onClick={()=>download(`reporte-prestamos-${current}.csv`,reportCsv(reportRows(loans,current)),'text/csv;charset=utf-8')}>Descargar reporte para Excel</button></div>
+        <div className="metrics report-metrics"><Metric label="Ganancia pactada" value={money(sum(newLoans,loan=>loan.amount*loan.count-loan.principal))}/><Metric label="Ganancia cobrada" value={money(sum(newLoans,totalPaid)-recovered)}/><Metric label="Capital recuperado" value={money(recovered)}/><Metric label="Cobros de saldos anteriores" value={money(sum(loans.filter(loan=>loan.type==='old'),totalPaid))}/></div>
         {!loans.length&&<p className="muted">Todavía no hay préstamos registrados.</p>}
         {loans.map((loan,index)=><details className="loan-accordion" key={loan.id}><summary><span>N.º {index+1} · {loan.person} · {frequencyNames[loan.frequency]} · {dateFormat(loan.first)}</span><strong>{remaining(loan)?`${money(remaining(loan))} pendiente`:'Pagado'}</strong></summary><div className="loan-accordion-body"><Table headers={['Vence','Cuota','Pendiente']} rows={schedule.filter(item=>item.loan.id===loan.id).map(item=>[dateFormat(item.date),money(item.amount),money(item.left)])} emptyText="Sin cuotas"/></div></details>)}
       </section>}

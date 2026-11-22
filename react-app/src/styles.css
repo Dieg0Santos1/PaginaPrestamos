@@ -15,6 +15,8 @@
 .consent-line{display:flex;align-items:flex-start;gap:10px;font-weight:500;line-height:1.4}
 .consent-line input{flex:none;width:18px;height:18px;min-height:18px;margin:2px 0 0;accent-color:#087b66}
 .loan-list{padding:0;border:0;background:transparent}
+.report-actions{display:flex;justify-content:flex-end;margin-bottom:12px}
+.report-actions button{max-width:100%}
 .loan-accordion{margin-bottom:12px;border:1px solid #dce7e8;border-radius:14px;background:#fff;overflow:hidden}
 .loan-accordion summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px;cursor:pointer;list-style:none;font-weight:700}
 .loan-accordion summary::-webkit-details-marker{display:none}
@@ -58,6 +60,7 @@
   .loan-accordion summary{align-items:flex-start;flex-direction:column;gap:6px;padding:16px}
   .loan-accordion summary strong{white-space:normal}
   .loan-accordion-body{padding:8px 12px 12px}
+  .report-actions button{width:100%}
 }
 @media(max-width:420px){
   .metrics{grid-template-columns:1fr}
