@@ -14,6 +14,7 @@
 .buttons button,.section-head button{min-height:40px}
 .cash-entry-row,.rate-entry-row{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .cash-entry-row label,.rate-entry-row label{flex:1 1 150px;min-width:0;margin:0}
+.cash-entry-row label{flex-basis:120px}
 .cash-actions{flex:0 0 auto;max-width:100%}
 .rate-entry-row>button{flex:0 0 auto;min-height:44px}
 .consent-line{display:flex;align-items:flex-start;gap:10px;font-weight:500;line-height:1.4}
