@@ -63,7 +63,7 @@ export default function App() {
   const [paymentForm,setPaymentForm] = useState(initialPayment);
   const [paymentText,setPaymentText] = useState('');
   const [editingPayment,setEditingPayment] = useState(null);
-  const [scheduleFilter,setScheduleFilter] = useState('pending');
+  const [scheduleFilter,setScheduleFilter] = useState('today');
 
   useEffect(() => { const change = () => setRoute(location.hash.slice(1) || 'panel'); window.addEventListener('hashchange',change); return () => window.removeEventListener('hashchange',change); }, []);
   useEffect(() => {
@@ -278,8 +278,8 @@ export default function App() {
         <p><small>Los abonos se aplican a las cuotas más antiguas primero. Puedes registrar pagos parciales o adelantados.</small></p>
         <Table headers={['Fecha','Cliente','Préstamo','Abono','Saldo tras el abono','Acciones']} rows={payments.map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount),money(row.balance),<div className="buttons" key={row.order}><button onClick={()=>editPayment(row)}>Editar</button><button className="danger-soft" onClick={()=>deletePayment(row)}>Eliminar</button></div>])} emptyText="Todavía no hay abonos registrados."/>
       </section>}
-      {route==='calendario'&&<section><h2>Calendario de cuotas</h2><label>Mostrar<select value={scheduleFilter} onChange={event=>setScheduleFilter(event.target.value)}><option value="pending">Pendientes</option><option value="overdue">Vencidas</option><option value="all">Todas</option></select></label>
-        <Table headers={['Vencimiento','Cliente','Préstamo','Cuota','Pendiente','Estado','WhatsApp']} rows={schedule.filter(item=>scheduleFilter==='all'||(item.left>0&&(scheduleFilter==='overdue'?item.date<current:item.date>=current))).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.amount),money(item.left),!item.left?'Pagada':item.date<current?'Vencida':item.date===current?'Vence hoy':'Pendiente',<WhatsAppButton key={`${item.loan.id}-${item.index}`} item={item} data={data}/>])} emptyText="No hay cuotas para mostrar."/>
+      {route==='calendario'&&<section><h2>Calendario de cuotas</h2><label>Mostrar<select value={scheduleFilter} onChange={event=>setScheduleFilter(event.target.value)}><option value="today">Vencen hoy</option><option value="pending">Pendientes</option><option value="all">Todas</option></select></label>
+        <Table headers={['Vencimiento','Cliente','Préstamo','Cuota','Pendiente','Estado','WhatsApp']} rows={schedule.filter(item=>scheduleFilter==='all'||(item.left>0&&(scheduleFilter==='today'?item.date===current:item.date>current))).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.amount),money(item.left),!item.left?'Pagada':item.date<current?'Vencida':item.date===current?'Vence hoy':'Pendiente',<WhatsAppButton key={`${item.loan.id}-${item.index}`} item={item} data={data}/>])} emptyText="No hay cuotas para mostrar."/>
       </section>}
       {route==='morosidad'&&<section><h2>Morosidad</h2><p>Saldo vencido <strong>{money(sum(overdue,item=>item.left))}</strong></p><Table headers={['Cliente','Cuotas vencidas','Vencimiento más antiguo','Saldo vencido']} rows={[...overdue.reduce((groups,item)=>{const group=groups.get(item.loan.person)??{count:0,total:0,first:item.date};group.count++;group.total+=item.left;groups.set(item.loan.person,group);return groups;},new Map())].map(([person,group])=>[person,group.count,dateFormat(group.first),money(group.total)])} emptyText="No hay cuotas vencidas."/></section>}
       {route==='reportes'&&<section className="loan-list" aria-label="Detalle de préstamos">
