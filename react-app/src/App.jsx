@@ -202,10 +202,8 @@ export default function App() {
     if (await commit(next,previous?'Abono actualizado.':'Abono registrado.')) {
       if (previous) clearPayment();
       else {
-        setPaymentForm(form=>({...form,amount:''}));
-        const updatedLoan=next.loans.find(item=>item.id===loan.id);
-        setPaymentText(remaining(updatedLoan)>0?loanLabel(updatedLoan,loans.indexOf(loan)):'');
-        if (remaining(updatedLoan)===0) setPaymentForm(initialPayment());
+        setPaymentForm(form=>({...form,loanId:'',amount:''}));
+        setPaymentText('');
       }
     }
   }
