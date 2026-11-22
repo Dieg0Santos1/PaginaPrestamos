@@ -5,3 +5,22 @@ CREATE TABLE IF NOT EXISTS registro (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 INSERT IGNORE INTO registro (id, datos) VALUES (1, '{"loans":[],"friends":[]}');
 
+CREATE TABLE IF NOT EXISTS whatsapp_outbox (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  message_key CHAR(64) NOT NULL UNIQUE,
+  kind VARCHAR(16) NOT NULL,
+  loan_id VARCHAR(191) NOT NULL,
+  installment_index SMALLINT UNSIGNED NULL,
+  due_date DATE NULL,
+  recipient VARCHAR(20) NULL,
+  message_text TEXT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at DATETIME NULL,
+  accepted_at DATETIME NULL,
+  last_error VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX pending_jobs (status, next_attempt_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

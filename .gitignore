@@ -1,0 +1,9 @@
+# Configuración y respaldos privados del hosting
+**/prestamos-config.php
+**/prestamos-antes-autorizacion-*.json
+prestamos-*.json
+*.log
+
+# Archivos locales de migración y capturas de prueba
+react-app/legacy-index.php
+react-app/menu-no-x.png

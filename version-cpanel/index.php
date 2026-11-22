@@ -52,7 +52,7 @@ if (!$auth) {
     if ($api) { http_response_code(401); exit; }
     ?>
 <!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mis préstamos</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f1f6f7;color:#172a39;font:16px system-ui}main{box-sizing:border-box;width:min(92%,420px);padding:28px;background:white;border-radius:16px}input,button{box-sizing:border-box;display:block;width:100%;margin-top:10px;padding:12px;font:inherit;border:1px solid #b7c9cc;border-radius:8px}button{background:#08715f;color:white}#clientLoans{width:min(860px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:clamp(14px,3vw,28px);color:var(--ink);background:var(--bg)}#clientLoans::backdrop{background:#142c3690}#clientLoans h3{margin:0}#clientLoans article{margin-bottom:10px}#clientSearch{max-width:420px;margin:0 0 12px}.client-loans-cell{white-space:nowrap;padding-right:20px}.client-actions{white-space:nowrap}.client-actions button{margin:2px}.client-actions button:last-child{background:#fff0ee;color:#932e29}#friend{padding:12px 0 18px}#cancelClient{background:#e6eff0;color:var(--ink)}
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f1f6f7;color:#172a39;font:16px system-ui}main{box-sizing:border-box;width:min(92%,420px);padding:28px;background:white;border-radius:16px}input,button{box-sizing:border-box;display:block;width:100%;margin-top:10px;padding:12px;font:inherit;border:1px solid #b7c9cc;border-radius:8px}button{background:#08715f;color:white}.whatsapp-link{position:relative;display:inline-block;width:40px;height:40px;padding:0;border:0;border-radius:10px;background:#00b985;color:#fff;cursor:pointer;vertical-align:middle;box-shadow:0 2px 5px #122b2633}.whatsapp-link::before{content:"";position:absolute;left:10px;top:9px;width:18px;height:17px;border:2px solid #fff;border-radius:50%}.whatsapp-link::after{content:"";position:absolute;left:10px;bottom:8px;width:6px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:skew(-18deg) rotate(-12deg)}.whatsapp-link:hover{background:#009f73}.whatsapp-link:disabled{opacity:.5;cursor:default}#cashMovementsDialog{width:min(700px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:24px;color:var(--ink);background:var(--paper)}#cashMovementsDialog::backdrop{background:#142c3690}.cash-dialog-header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.cash-dialog-header h2{margin:0}.cash-history-button{margin-left:12px;background:#e6eff0;color:var(--ink)}#clientLoans{width:min(860px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:clamp(14px,3vw,28px);color:var(--ink);background:var(--bg)}#clientLoans::backdrop{background:#142c3690}#clientLoans h3{margin:0}#clientLoans article{margin-bottom:10px}#clientSearch{max-width:420px;margin:0 0 12px}.client-loans-cell{white-space:nowrap;padding-right:20px}.client-actions{white-space:nowrap}.client-actions button{margin:2px}.client-actions button:last-child{background:#fff0ee;color:#932e29}#friend{padding:12px 0 18px}#cancelClient{background:#e6eff0;color:var(--ink)}
 </style>
 <main><h1>Mis préstamos</h1><form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>"><label>Usuario<input name="login_user" autocomplete="username" required></label><label>Contraseña<input type="password" name="login_password" autocomplete="current-password" required></label><button>Ingresar</button></form><?php if ($post): ?><p role="alert">Comprueba tu usuario y contraseña.</p><?php endif; ?></main></html>
     <?php
@@ -74,9 +74,38 @@ try {
         $request = json_decode($raw);
         if (!is_int($request->revision ?? null) || !is_array($request->data->loans ?? null)
             || !is_array($request->data->friends ?? null)) { http_response_code(400); exit; }
-        $update = $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1 AND revision=?');
-        $update->execute([json_encode($request->data, JSON_THROW_ON_ERROR),$request->revision]);
-        if ($update->rowCount() !== 1) { http_response_code(409); exit; }
+        $db->beginTransaction();
+        $previous = $db->query('SELECT datos, revision FROM registro WHERE id=1 FOR UPDATE')->fetch(PDO::FETCH_ASSOC);
+        if (!$previous || (int) $previous['revision'] !== $request->revision) {
+            $db->rollBack();
+            http_response_code(409);
+            exit;
+        }
+        $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
+            ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
+        if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
+            $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
+            $oldIds = [];
+            foreach ($oldData->loans ?? [] as $loan) {
+                if (is_string($loan->id ?? null)) $oldIds[$loan->id] = true;
+            }
+            $consented = [];
+            foreach ($request->data->friends as $friend) {
+                if (is_string($friend->person ?? null) && ($friend->whatsappConsent ?? false) === true
+                    && is_string($friend->phone ?? null)) {
+                    $phone = preg_replace('/\D+/', '', $friend->phone);
+                    if (preg_match('/^(?:9\d{8}|519\d{8})$/', $phone)) $consented[$friend->person] = true;
+                }
+            }
+            $enqueue = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
+                (message_key, kind, loan_id) VALUES (?, 'created', ?)");
+            foreach ($request->data->loans as $loan) {
+                if (!is_string($loan->id ?? null) || !is_string($loan->person ?? null)
+                    || isset($oldIds[$loan->id]) || empty($consented[$loan->person])) continue;
+                $enqueue->execute([hash('sha256', 'created:'.$loan->id), $loan->id]);
+            }
+        }
+        $db->commit();
         header('Content-Type: application/json');
         echo json_encode(['revision'=>$request->revision+1]);
         exit;
@@ -87,713 +116,33 @@ try {
         'revision'=>(int)$row['revision'],'token'=>$token],
         JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {
+    if (isset($db) && $db->inTransaction()) $db->rollBack();
     error_log('Mis préstamos: '.get_class($error));
     http_response_code(503);
     exit('El registro no está disponible. Revisa la configuración de la base de datos.');
 }
+
+$manifestPath = __DIR__.'/react-dist/manifest.json';
+$manifest = is_readable($manifestPath) ? json_decode(file_get_contents($manifestPath), true) : null;
+$entry = is_array($manifest) ? ($manifest['index.html'] ?? null) : null;
+if (!is_array($entry) || empty($entry['file'])) {
+    http_response_code(503);
+    exit('Falta la compilación de React. Ejecuta npm run build y sube react-dist.');
+}
+$script = 'react-dist/'.$entry['file'];
+$styles = array_map(static fn ($file) => 'react-dist/'.$file, $entry['css'] ?? []);
 ?>
-
 <!doctype html>
-<html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mis préstamos</title>
-<style>
-:root{color-scheme:light;--ink:#172a39;--muted:#526773;--accent:#087b66;--line:#dce7e8;--paper:#fff;--bg:#f1f6f7}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px system-ui,sans-serif}aside{position:fixed;inset:0 auto 0 0;width:232px;background:#142c36;color:white;padding:28px 16px;overflow:auto}.brand{display:flex;gap:12px;align-items:center;padding:0 8px 24px;font-size:19px;font-weight:750}.brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:#a4ecda;color:#14382f;font-size:15px}nav{display:grid;gap:5px}nav a{color:#c4d6dc;text-decoration:none;padding:11px 12px;display:flex;align-items:center;gap:11px;border-radius:8px}nav a:hover,nav a[aria-current=page]{background:#244651;color:white}nav a[aria-current=page]{box-shadow:inset 3px 0 #78dfc2}nav svg{width:19px;height:19px;flex:none}main{margin-left:232px;padding:32px clamp(18px,4vw,60px);max-width:1600px}header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:24px}h1{font-size:clamp(24px,3vw,36px);margin:0;letter-spacing:-.04em}h2{font-size:1.12rem;margin:0 0 14px}h3{font-size:1rem}p{line-height:1.5}header p{margin:5px 0 0;color:var(--muted)}#today{color:var(--muted);text-align:right}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,242px),1fr));gap:16px}.dashboard-grid{grid-template-columns:minmax(0,1.65fr) minmax(0,1fr)}section,article{min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}#panel .grid:first-child{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{font-size:clamp(19px,2.2vw,28px);font-weight:780;letter-spacing:-.04em;margin:8px 0}#panel .grid:first-child section:first-child{background:#08715f;color:white;border-color:#08715f}#panel .grid:first-child section:first-child small{color:#daf7ee}label{display:block;margin:10px 0;font-weight:600}input,select,button{font:inherit;border-radius:8px;padding:9px 11px;border:1px solid #b7c9cc}input,select{width:100%;margin-top:5px;background:white;color:var(--ink)}button{cursor:pointer;background:var(--accent);color:white;border:0;font-weight:650}button:disabled{opacity:.55;cursor:default}summary{cursor:pointer;font-weight:650}small{color:var(--muted)}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{font-size:.82rem;color:var(--muted)}.scroll-table{overflow:auto}#msg:empty{display:none}#msg{position:sticky;top:0;background:#fff2d9;padding:10px 14px;border-radius:8px;z-index:1}.late{color:#9a352f}.route[hidden]{display:none}.section-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.section-head a{color:var(--accent);font-size:.86rem;font-weight:700}.bar{display:flex;height:12px;background:#e4eeed;border-radius:9px;overflow:hidden;margin:18px 0}.bar span{background:var(--accent)}.collection{display:grid;gap:8px}.collection div{display:flex;justify-content:space-between;gap:8px}.collection strong{white-space:nowrap}
-@media(max-width:1050px){#panel .grid:first-child{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-grid{grid-template-columns:1fr}}
-@media(max-width:600px){aside{width:62px;padding:18px 7px}.brand{padding:0 5px 16px}.brand span:last-child,nav a span{display:none}nav a{padding:13px;justify-content:center}main{margin-left:62px;padding:20px 12px}header{align-items:flex-start;flex-direction:column;gap:4px}section,article{padding:12px}#panel .grid:first-child{gap:8px}}
-#clientLoans{width:min(860px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:clamp(14px,3vw,28px);color:var(--ink);background:var(--bg)}#clientLoans::backdrop{background:#142c3690}#clientLoans h3{margin:0}#clientLoans article{margin-bottom:10px}#clientSearch{max-width:420px;margin:0 0 12px}.client-loans-cell{white-space:nowrap;padding-right:20px}.client-actions{white-space:nowrap}.client-actions button{margin:2px}.client-actions button:last-child{background:#fff0ee;color:#932e29}#friend{padding:12px 0 18px}#cancelClient{background:#e6eff0;color:var(--ink)}
-</style>
-<aside><div class="brand"><span class="brand-mark">S/</span><span>Mis préstamos</span></div><nav aria-label="Módulos"><a href="#panel" aria-label="Panel principal" title="Panel principal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z"/></svg><span>Panel principal</span></a><a href="#clientes" aria-label="Clientes" title="Clientes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8"/></svg><span>Clientes</span></a><a href="#nuevo" aria-label="Préstamos" title="Préstamos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z M8 8h8 M8 12h8 M8 16h4"/></svg><span>Préstamos</span></a><a href="#calendario" aria-label="Calendario" title="Calendario"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v16H3z M7 3v4 M17 3v4 M3 10h18"/></svg><span>Calendario</span></a><a href="#pagos" aria-label="Pagos" title="Pagos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18v12H3z M3 10h18 M7 14h4"/></svg><span>Pagos</span></a><a href="#morosidad" aria-label="Morosidad" title="Morosidad"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20z M12 9v5 M12 17h.01"/></svg><span>Morosidad</span></a><a href="#reportes" aria-label="Reportes" title="Reportes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18 M8 17v-5 M13 17V8 M18 17V5"/></svg><span>Reportes</span></a><a href="#respaldo" aria-label="Respaldo" title="Respaldo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z M8 4v6h8V4 M8 20v-6h8v6"/></svg><span>Respaldo</span></a></nav><form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>"><button name="logout" value="1" aria-label="Cerrar sesión" title="Cerrar sesión">↪</button></form></aside><main><header><div><h1 id="pageTitle">Panel principal</h1><p id="pageSubtitle">Caja y cartera de préstamos</p></div><time id="today"></time></header>
-<p id="msg" role="status"></p>
-<div id="panel" class="route"><div class="grid">
-<section>Caja disponible<div class="metric" id="cash"></div><small>Saldo de apertura: S/ 1,830.00</small></section>
-<section>Por cobrar en total<div class="metric" id="pending"></div><small id="opening"></small></section>
-<section>Capital prestado pendiente<div class="metric" id="capital"></div><small>Capital identificado desde los desembolsos registrados</small></section>
-<section>Pagos recibidos<div class="metric" id="received"></div><small>Total de abonos registrados</small></section>
-</div><div class="grid dashboard-grid"><section><h2>Interés mensual</h2>
-<form id="rateForm" style="display:flex;align-items:end;gap:12px;flex-wrap:wrap"><label style="margin:0;flex:1;min-width:140px">Tasa mensual (%)<input name="rate" type="number" min="0" step=".01" placeholder="Ej. 10"></label>
-<button style="min-height:40px">Guardar tasa</button></form></section>
-<section><h2>Caja disponible + por cobrar</h2><div class="metric" id="totalFunds"></div><small>Suma de los dos saldos del panel</small></section></div>
-<div class="grid dashboard-grid">
-<section><div class="section-head"><h2>Próximos vencimientos</h2><a href="#calendario">Ver calendario</a></div><div id="upcoming"></div></section>
-<section><div class="section-head"><h2>Estado de cobros</h2><a href="#morosidad">Ver morosidad</a></div>
-<div class="bar" id="collectionBar" role="img"><span id="collectionFill"></span></div>
-<div class="collection"><div><span>Cobrado</span><strong id="collected"></strong></div><div><span>Pendiente registrado</span><strong id="registeredBalance"></strong></div><div><span>Cuotas vencidas</span><strong id="dashboardLate"></strong></div></div>
-</section></div><section><h2>Últimos pagos</h2><div id="recentPayments"></div></section></div>
-<section id="clientes" class="route"><div class="section-head"><h2>Registro de clientes</h2><button type="button" id="newClient">Nuevo cliente</button></div>
-<form id="friend" hidden><h3 id="clientFormTitle"></h3><div class="grid">
-<label>Nombre completo<input name="person" maxlength="100" required></label>
-<label>DNI (opcional)<input name="dni" inputmode="numeric" pattern="[0-9]{8}" maxlength="8"></label>
-<label>Teléfono<input name="phone" type="tel" maxlength="30"></label>
-<label>Dirección de referencia<input name="address" maxlength="200"></label>
-</div><button>Guardar cliente</button> <button type="button" id="cancelClient">Cancelar</button></form><label for="clientSearch">Buscar clientes</label><input id="clientSearch" type="search" placeholder="Nombre, DNI o teléfono"><div id="friendList"></div></section><dialog id="clientLoans" aria-label="Préstamos del cliente"></dialog>
-<section id="nuevo" class="route"><h2 id="loanTitle">Registrar préstamo</h2>
-<form id="loan"><label>Persona<select name="person" id="people" required></select></label>
-<label>Tipo<select name="type"><option value="new">Nuevo desembolso</option><option value="old">Saldo anterior por detallar</option></select></label>
-<label><span id="principalLabel">Monto prestado (S/)</span><input name="principal" type="number" min=".01" step=".01" max="100000000" required></label>
-<label>Fecha de desembolso<input name="issued" type="date" min="1900-01-01"></label>
-<label>Frecuencia<select name="frequency"><option value="week">Semanal</option><option value="fortnight">Quincenal</option><option value="month">Mensual</option></select></label>
-<label><span id="countLabel">Número de semanas</span><input name="count" type="number" min="1" max="120" value="4" required></label>
-<label>Monto por cuota (S/)<input name="amount" type="number" min=".01" step=".01" max="100000000" required></label>
-<label>Fecha de la primera cuota pendiente<input name="first" type="date" min="1900-01-01" max="2200-12-31" required></label>
-<p id="preview"></p><button>Guardar préstamo</button> <button id="cancelLoanEdit" type="button" hidden>Cancelar edición</button></form></section>
-<section id="pagos" class="route"><h2>Registrar abono</h2><form id="pay"><label>Préstamo<select name="id" required></select></label>
-<label>Monto recibido (S/)<input name="amount" type="number" min=".01" step=".01" max="100000000" required></label>
-<label>Fecha de recepción<input name="date" type="date" min="1900-01-01" required></label>
-<button id="savePayment">Guardar abono</button> <button id="cancelPaymentEdit" type="button" hidden>Cancelar edición</button></form><p><small>Los abonos se aplican a las cuotas más antiguas primero. Puedes registrar pagos parciales o adelantados.</small></p><div id="paymentList"></div></section>
-<section id="calendario" class="route"><h2>Calendario de cuotas</h2><label>Mostrar<select id="scheduleFilter"><option value="pending">Pendientes</option><option value="all">Todas</option></select></label><div id="schedule"></div></section>
-<section id="morosidad" class="route"><h2>Morosidad</h2><p>Saldo vencido <strong id="late"></strong></p><div id="arrears"></div></section>
-<section id="reportes" class="route"><div class="section-head"><h2>Reportes</h2><button id="downloadReport" type="button">Descargar reporte de préstamos</button></div><div class="grid">
-<div>Ganancia pactada<div class="metric" id="expectedProfit"></div></div>
-<div>Ganancia cobrada<div class="metric" id="profit"></div></div>
-<div>Capital recuperado<div class="metric" id="recovered"></div></div>
-<div>Cobros de saldos anteriores<div class="metric" id="legacyPayments"></div></div>
-</div><p><small>El reporte aplica los cobros primero al capital identificado de cada préstamo nuevo. Los saldos anteriores se muestran aparte porque no se conoce su desglose entre capital y ganancia.</small></p>
-<p id="portfolio"></p><h3>Detalle de préstamos</h3><div id="loans"></div></section>
-<section id="respaldo" class="route"><h2>Respaldo</h2><p>Los datos se guardan en la base de datos del hosting. Puedes descargar una copia de respaldo.</p><button id="backup">Descargar copia</button><label>Restaurar una copia<input id="restore" type="file" accept=".json,application/json"></label></section></main>
-<script>
-const $=id=>document.getElementById(id);
-const key='mis-prestamos-v1', initialCash=183000, initialReceivable=984000;
-const currency=new Intl.NumberFormat('es-PE',{style:'currency',currency:'PEN'});
-const money=cents=>currency.format(cents/100);
-const cents=value=>Math.round(Number(value)*100);
-const iso=date=>date.toISOString().slice(0,10);
-const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/Lima'}).format(new Date());
-const dateFormat=value=>value.split('-').reverse().join('/');
-const sum=(items,value)=>items.reduce((total,item)=>total+value(item),0);
-const remaining=item=>item.amount*item.count-sum(item.payments,p=>p.amount);
-let data={loans:[],friends:[]}, ready=true;
-function fail(message){$('msg').textContent=message;}
-function due(first,frequency,index){
-  const date=new Date(first+'T12:00:00Z');
-  if(frequency==='week') date.setUTCDate(date.getUTCDate()+index*7);
-  else if(frequency==='fortnight') date.setUTCDate(date.getUTCDate()+index*15);
-  else{
-    const day=date.getUTCDate();
-    date.setUTCDate(1);
-    date.setUTCMonth(date.getUTCMonth()+index);
-    const last=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).getUTCDate();
-    date.setUTCDate(Math.min(day,last));
-  }
-  return iso(date);
-}
-function opening(loans){return initialReceivable-sum(loans.filter(l=>l.type==='old'),l=>l.principal);}
-function cash(loans){
-  return initialCash-sum(loans.filter(l=>l.type==='new'),l=>l.principal)
-    +sum(loans,l=>sum(l.payments,p=>p.amount));
-}
-function validDate(value){
-  return typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-    && !Number.isNaN(Date.parse(value)) && iso(new Date(value))===value;
-}
-function installmentWithInterest(principal,frequency,count,rate){
-  const unitsPerMonth={week:1,fortnight:2,month:4};
-  const units=BigInt(count*unitsPerMonth[frequency]);
-  const numerator=BigInt(principal)*(40000n+units*BigInt(rate));
-  const denominator=40000n*BigInt(count);
-  return Number((numerator+denominator-1n)/denominator);
-}
-function validRate(rate){return Number.isSafeInteger(rate)&&rate>=0;}
-function valid(snapshot){
-  const positive=n=>Number.isSafeInteger(n)&&n>0&&n<=10000000000;
-  if(!Array.isArray(snapshot?.loans)) return false;
-  if(snapshot.monthlyRate!=null&&!validRate(snapshot.monthlyRate)) return false;
-  const loans=snapshot.loans;
-  if(snapshot.friends!==undefined && (!Array.isArray(snapshot.friends)
-    || !snapshot.friends.every(f=>f && typeof f.person==='string' && f.person.trim()
-      && typeof f.dni==='string' && /^(?:\d{8})?$/.test(f.dni)
-      && typeof f.phone==='string' && typeof f.address==='string')
-    || new Set(snapshot.friends.map(f=>f.person)).size!==snapshot.friends.length)) return false;
-  return loans.every(l=>l && typeof l.id==='string' && l.id && typeof l.person==='string'
-    && l.person.trim() && ['old','new'].includes(l.type) && ['week','fortnight','month'].includes(l.frequency)
-    && (l.monthlyRate===undefined || (l.type==='new' && validRate(l.monthlyRate)))
-    && (l.originalPrincipal===undefined || (l.type==='old' && positive(l.originalPrincipal)))
-    && positive(l.principal) && positive(l.amount) && Number.isInteger(l.count) && l.count>=1 && l.count<=120
-    && (l.issued===undefined || (validDate(l.issued) && l.issued<=l.first))
-    && validDate(l.first) && l.first>='1900-01-01' && l.first<='2200-12-31'
-    && Array.isArray(l.payments) && l.payments.every(p=>p && positive(p.amount)&&validDate(p.date))
-    && remaining(l)>=0 && (l.type==='old'?l.principal===l.amount*l.count:l.principal<=l.amount*l.count))
-    && new Set(loans.map(l=>l.id)).size===loans.length && cash(loans)>=0 && opening(loans)>=0;
-}
-function withFriends(snapshot){
-  const friends=new Map((snapshot.friends||[]).map(f=>[f.person,f]));
-  for(const l of snapshot.loans){
-    if(!friends.has(l.person)) friends.set(l.person,{person:l.person,dni:'',phone:'',address:''});
-  }
-  return {...snapshot,friends:[...friends.values()]};
-}
-const server=<?= $bootstrap ?>;
-let revision=server.revision, saving=false;
-if(valid(server.data)) data=withFriends(server.data);
-else {ready=false;fail('Restaura una copia válida antes de registrar movimientos.');}
-async function save(next,restore=false){
-  if(!ready&&!restore) return fail('Restaura una copia válida antes de registrar movimientos.');
-  if(saving) return fail('Hay un guardado en curso.');
-  if(!valid(next)) return fail('El registro contiene datos inválidos.');
-  saving=true;
-  try{
-    const response=await fetch('?api=1',{
-      method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},
-      body:JSON.stringify({revision,data:next})
-    });
-    if(response.status===409) return fail('Hubo cambios en otro dispositivo. Recarga y vuelve a introducir el movimiento.');
-    if(response.status===401) return fail('La sesión terminó. Recarga para volver a ingresar.');
-    if(!response.ok) throw Error();
-    revision=(await response.json()).revision;
-    data=withFriends(next);
-    ready=true;
-    fail('');
-    render();
-    return true;
-  }catch{return fail('No se pudo confirmar el guardado. Recarga para comprobar si quedó registrado.');}
-  finally{saving=false;}
-}
-function node(tag,value,parent){
-  const element=document.createElement(tag);
-  if(value!==null) element.textContent=value;
-  parent.append(element);
-  return element;
-}
-function showTable(id,columns,rows,empty){
-  const target=$(id);
-  target.replaceChildren();
-  if(!rows.length){node('p',empty,target);return;}
-  const table=node('table',null,node('div',null,target));
-  table.parentElement.className='scroll-table';
-  const head=node('tr',null,node('thead',null,table));
-  for(const label of columns) node('th',label,head).scope='col';
-  const body=node('tbody',null,table);
-  for(const values of rows){
-    const row=node('tr',null,body);
-    for(const value of values) node('td',value,row);
-  }
-}
-const totalPaid=l=>l.amount*l.count-remaining(l);
-let managedClient=null;
-$('clientLoans').addEventListener('close',()=>{ managedClient=null; });
-function renderClientLoans(){
-  const panel=$('clientLoans');
-  panel.replaceChildren();
-  const client=data.friends.find(f=>f.person===managedClient);
-  if(!client){
-    if(managedClient!==null) node('p','El cliente ya no figura en el registro.',panel);
-    return;
-  }
-  const header=node('div',null,panel);
-  header.className='section-head';
-  node('h3','Préstamos de '+client.person,header);
-  const close=node('button','Cerrar',header);
-  close.onclick=()=>panel.close();
-  const create=node('button','Nuevo préstamo',panel);
-  create.onclick=()=>{
-    panel.close();
-    location.hash='nuevo';
-    if(editingLoanId) resetLoanForm();
-    $('loan').elements.person.value=client.person;
-  };
-  const status=node('div',null,panel);
-  status.id='clientLoanStatus';
-  status.setAttribute('role','status');
-  const matches=data.loans.filter(l=>l.person===client.person);
-  node('p','Saldo pendiente: '+money(sum(matches,remaining)),panel);
-  if(!matches.length) node('p','Este cliente aún no tiene préstamos.',panel);
-  for(const l of matches){
-    const index=data.loans.indexOf(l);
-    const detail=$('loans').children[index].cloneNode(true);
-    panel.append(detail);
-    {
-      const actions=node('p',null,detail);
-      node('button','Editar préstamo',actions).onclick=()=>editLoan(l);
-      actions.append(' ');
-      const remove=node('button','Eliminar préstamo',actions);
-      remove.disabled=l.payments.length>0;
-      if(remove.disabled) node('small',' Tiene abonos registrados.',actions);
-      remove.onclick=()=>deleteLoan(l);
-    }
-    if(remaining(l)>0){
-      const payButton=node('button','Registrar abono',detail.querySelector('details'));
-      payButton.onclick=()=>{
-        panel.close();
-        location.hash='pagos';
-        $('pay').elements.id.value=l.id;
-      };
-    }
-  }
-}
-$( 'clientSearch' ).oninput=renderClientList;
-function renderClientList(){
-  const normalize=value=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('es');
-  const digits=value=>value.replace(/\D/g,'');
-  const query=normalize($('clientSearch').value.trim());
-  const numeric=/^[+\d\s().-]+$/.test(query)?digits(query):'';
-  const friends=data.friends.filter(f=>normalize(f.person).includes(query)
-    ||(numeric&&(digits(f.dni).includes(numeric)||digits(f.phone).includes(numeric))))
-    .sort((a,b)=>a.person.localeCompare(b.person,'es'));
-  showTable('friendList',['Nombre','DNI','Teléfono','Dirección de referencia','Préstamos','Acciones'],
-    friends.map(f=>[f.person,f.dni||'—',f.phone||'—',f.address||'—','','']),query?'No se encontraron clientes.':'Todavía no hay clientes registrados.');
-  $('friendList').querySelectorAll('tbody tr').forEach((row,index)=>{
-    const contact=friends[index], actions=row.lastElementChild;
-    actions.className='client-actions';
-    const loansCell=actions.previousElementSibling;
-    loansCell.className='client-loans-cell';
-    const manage=node('button','Gestionar préstamos',loansCell);
-    manage.type='button';
-    manage.setAttribute('aria-label','Gestionar préstamos de '+contact.person);
-    manage.onclick=()=>{
-      managedClient=contact.person;
-      renderClientLoans();
-      $('clientLoans').showModal();
-    };
-    const edit=node('button','Editar',actions);
-    edit.type='button';
-    edit.setAttribute('aria-label','Editar a '+contact.person);
-    edit.onclick=()=>openClientForm(contact);
-    const remove=node('button','Eliminar',actions);
-    remove.type='button';
-    remove.setAttribute('aria-label','Eliminar a '+contact.person);
-    remove.onclick=()=>deleteClient(contact);
-  });
-}
-function render(){
-  $('rateForm').elements.rate.value=monthlySetting()/100;
-  preview();
-  const current=today();
-  $('cash').textContent=money(cash(data.loans));
-  $('pending').textContent=money(opening(data.loans)+sum(data.loans,remaining));
-  $('totalFunds').textContent=money(cash(data.loans)+opening(data.loans)+sum(data.loans,remaining));
-  $('opening').textContent=money(opening(data.loans))+' de saldo inicial por detallar';
-  $('loans').replaceChildren();
-  const select=$('pay').elements.id, oldSelection=select.value;
-  select.replaceChildren(new Option('Selecciona un préstamo',''));
-  const people=$('people'), selectedPerson=people.value;
-  const friends=[...data.friends].sort((a,b)=>a.person.localeCompare(b.person,'es'));
-  people.replaceChildren(new Option('Selecciona un cliente',''),...friends.map(f=>new Option(f.person,f.person)));
-  people.value=selectedPerson;
-  $('loan').querySelector('button').disabled=!friends.length;
-  renderClientList();
-  const installments=[], payments=[];
-  const newLoans=data.loans.filter(l=>l.type==='new');
-  const recovered=sum(newLoans,l=>Math.min(l.principal,totalPaid(l)));
-  $('capital').textContent=money(sum(newLoans,l=>l.principal)-recovered);
-  $('received').textContent=money(sum(data.loans,totalPaid));
-  $('recovered').textContent=money(recovered);
-  $('profit').textContent=money(sum(newLoans,totalPaid)-recovered);
-  $('expectedProfit').textContent=money(sum(newLoans,l=>l.amount*l.count-l.principal));
-  $('legacyPayments').textContent=money(sum(data.loans.filter(l=>l.type==='old'),totalPaid));
-  $('portfolio').textContent='Préstamos con saldo: '+data.loans.filter(l=>remaining(l)>0).length
-    +' · Total por cobrar: '+$('pending').textContent;
-  if(!data.loans.length) node('p','Todavía no hay préstamos registrados.',$('loans'));
-  for(const l of data.loans){
-    const reference='N.º '+(data.loans.indexOf(l)+1);
-    const title=reference+' · '+l.person+' · '+({week:'Semanal',fortnight:'Quincenal',month:'Mensual'}[l.frequency])+' · '+dateFormat(l.first);
-    const balance=remaining(l);
-    if(balance||editingPayment?.loanId===l.id) select.add(new Option(title+' · '+money(balance)+' pendiente',l.id));
-    const detail=node('details',null,node('article',null,$('loans')));
-    node('summary',title+' · '+(balance?money(balance)+' pendiente':'Pagado'),detail);
-    if(l.monthlyRate!==undefined) node('p','Interés mensual: '+l.monthlyRate/100+' % · Interés total: '+money(l.amount*l.count-l.principal),detail);
-    if(l.originalPrincipal) node('p','Monto prestado originalmente: '+money(l.originalPrincipal),detail);
-    node('p',(l.type==='new'?'Entregado: ':'Saldo inicial asignado: ')+money(l.principal)
-      +' · Total de cuotas: '+money(l.amount*l.count)+(l.issued?' · Desembolso: '+dateFormat(l.issued):''),detail);
-    const table=node('table',null,detail), head=node('tr',null,node('thead',null,table));
-    for(const label of ['Vence','Cuota','Pendiente']) node('th',label,head).scope='col';
-    let paid=sum(l.payments,p=>p.amount);
-    const body=node('tbody',null,table);
-    for(let i=0;i<l.count;i++){
-      const date=due(l.first,l.frequency,i), left=Math.max(l.amount-paid,0);
-      paid=Math.max(paid-l.amount,0);
-      const row=node('tr',null,body);
-      node('td',dateFormat(date),row);
-      node('td',money(l.amount),row);
-      node('td',money(left),row);
-      installments.push({person:l.person,reference,date,left,amount:l.amount});
-      if(left&&date<current) row.className='late';
-    }
-    if(l.payments.length){
-      node('h3','Abonos recibidos',detail);
-      const list=node('ul',null,detail);
-      let balanceAfter=l.amount*l.count;
-      for(const p of [...l.payments].sort((a,b)=>a.date.localeCompare(b.date))){
-        balanceAfter-=p.amount;
-        node('li',dateFormat(p.date)+' · '+money(p.amount)+' · Saldo: '+money(balanceAfter),list);
-        payments.push({loanId:l.id,payment:p,person:l.person,reference,date:p.date,amount:p.amount,balanceAfter});
-      }
-    }
-  }
-  installments.sort((a,b)=>a.date.localeCompare(b.date));
-  const visible=installments.filter(i=>i.left||$('scheduleFilter').value==='all');
-  showTable('schedule',['Vencimiento','Cliente','Préstamo','Cuota','Pendiente','Estado'],
-    visible.map(i=>[dateFormat(i.date),i.person,i.reference,money(i.amount),money(i.left),
-      !i.left?'Pagada':i.date<current?'Vencida':i.date===current?'Vence hoy':'Pendiente']),
-    'No hay cuotas para mostrar.');
-  const overdue=installments.filter(i=>i.left&&i.date<current);
-  const byPerson=new Map();
-  for(const i of overdue){
-    const group=byPerson.get(i.person)||{count:0,total:0,first:i.date};
-    group.count++;
-    group.total+=i.left;
-    byPerson.set(i.person,group);
-  }
-  $('late').textContent=money(sum(overdue,i=>i.left));
-  showTable('arrears',['Cliente','Cuotas vencidas','Vencimiento más antiguo','Saldo vencido'],
-    [...byPerson].map(([person,g])=>[person,g.count,dateFormat(g.first),money(g.total)]),
-    'No hay cuotas vencidas.');
-  payments.sort((a,b)=>b.date.localeCompare(a.date));
-  const collected=sum(data.loans,totalPaid), balance=sum(data.loans,remaining);
-  const share=collected+balance?Math.round(100*collected/(collected+balance)):0;
-  $('collectionFill').style.width=share+'%';
-  $('collectionBar').setAttribute('aria-label',share+' % cobrado de las cuotas registradas');
-  $('collected').textContent=money(collected);
-  $('registeredBalance').textContent=money(balance);
-  $('dashboardLate').textContent=$('late').textContent;
-  showTable('upcoming',['Vence','Cliente','Préstamo','Pendiente'],
-    installments.filter(i=>i.left&&i.date>=current).slice(0,6)
-      .map(i=>[dateFormat(i.date),i.person,i.reference,money(i.left)]),'No hay próximos vencimientos.');
-  showTable('recentPayments',['Fecha','Cliente','Préstamo','Abono'],
-    payments.slice(0,5).map(p=>[dateFormat(p.date),p.person,p.reference,money(p.amount)]),
-    'Todavía no hay pagos registrados.');
-  showTable('paymentList',['Fecha','Cliente','Préstamo','Abono','Saldo tras el abono','Acciones'],
-    payments.map(p=>[dateFormat(p.date),p.person,p.reference,money(p.amount),money(p.balanceAfter),'']),
-    'Todavía no hay pagos registrados.');
-  $('paymentList').querySelectorAll('tbody tr').forEach((row,index)=>{
-    const entry=payments[index], actions=row.lastElementChild;
-    actions.className='client-actions';
-    node('button','Editar',actions).onclick=()=>editPayment(entry);
-    node('button','Eliminar',actions).onclick=()=>deletePayment(entry);
-  });
-  renderClientLoans();
-  if([...select.options].some(o=>o.value===oldSelection)) select.value=oldSelection;
-  $('pay').querySelector('button').disabled=select.options.length===1;
-}
-const loan=$('loan'), pay=$('pay'), friend=$('friend');
-$('scheduleFilter').onchange=render;
-let editingClient=null;
-function openClientForm(contact){
-  editingClient=contact?.person??null;
-  friend.reset();
-  if(contact){
-    for(const name of ['person','dni','phone','address']) friend.elements[name].value=contact[name];
-  }
-  $('clientFormTitle').textContent=contact?'Editar cliente':'Nuevo cliente';
-  friend.hidden=false;
-  friend.elements.person.focus();
-}
-function closeClientForm(){
-  editingClient=null;
-  friend.reset();
-  friend.hidden=true;
-  $('newClient').focus();
-}
-$('newClient').onclick=()=>openClientForm();
-$('cancelClient').onclick=closeClientForm;
-friend.onsubmit=async event=>{
-  event.preventDefault();
-  const previous=editingClient;
-  const fields=friend.elements;
-  const contact=Object.fromEntries(['person','dni','phone','address'].map(name=>[name,fields[name].value.trim()]));
-  if(!contact.person) return fail('Escribe el nombre del cliente.');
-  const duplicate=data.friends.some(client=>client.person!==previous
-    && client.person.toLocaleLowerCase('es')===contact.person.toLocaleLowerCase('es'));
-  if(contact.person!==previous&&duplicate) return fail('Ya existe un cliente con ese nombre.');
-  const friends=previous===null?[...data.friends,contact]:
-    data.friends.map(client=>client.person===previous?contact:client);
-  const loans=data.loans.map(loan=>loan.person===previous?{...loan,person:contact.person}:loan);
-  if(await save({...data,friends,loans})){
-    if(editingClient===previous) closeClientForm();
-    loan.elements.person.value=contact.person;
-    fail(previous===null?'Cliente creado.':'Cliente actualizado.');
-  }
-};
-async function deleteClient(contact){
-  if(data.loans.some(loan=>loan.person===contact.person)){
-    return fail('Este cliente tiene préstamos en el historial y su ficha se debe conservar.');
-  }
-  if(!confirm('¿Eliminar a '+contact.person+' de la lista de clientes?')) return;
-  const friends=data.friends.filter(client=>client.person!==contact.person);
-  if(await save({...data,friends})){
-    if(editingClient===contact.person) closeClientForm();
-    else if(friend.hidden) $('newClient').focus();
-    fail('Cliente eliminado.');
-  }
-}
-loan.elements.issued.value=today();
-loan.elements.issued.max=today();
-pay.elements.date.value=today();
-pay.elements.date.max=today();
-function monthlySetting(){return data.monthlyRate??2000;}
-function loanRate(type,editing){
-  if(type!=='new') return undefined;
-  return editing?editing.monthlyRate:monthlySetting();
-}
-$('rateForm').onsubmit=async event=>{
-  event.preventDefault();
-  const value=$('rateForm').elements.rate.value;
-  const next={...data};
-  if(value==='') delete next.monthlyRate;
-  else{
-    next.monthlyRate=cents(value);
-    if(!validRate(next.monthlyRate)) return fail('Ingresa un porcentaje válido.');
-  }
-  if(await save(next)) fail('Tasa mensual guardada.');
-};
-function preview(){
-  const fields=loan.elements;
-  const count=Number(fields.count.value), principal=cents(fields.principal.value);
-  const rate=loanRate(fields.type.value,data.loans.find(l=>l.id===editingLoanId));
-  if(rate!==undefined){
-    const validInput=Number.isSafeInteger(principal)&&principal>0&&Number.isInteger(count)&&count>=1&&count<=120;
-    fields.amount.value=validInput?(installmentWithInterest(principal,fields.frequency.value,count,rate)/100).toFixed(2):'';
-  }else if(fields.amount.readOnly) fields.amount.value='';
-  fields.amount.readOnly=rate!==undefined;
-  const total=cents(fields.amount.value)*count;
-  const old=fields.type.value==='old';
-  fields.principal.required=!old;
-  $('principalLabel').textContent=old?'Monto prestado originalmente (S/, opcional)':'Monto prestado (S/)';
-  fields.issued.closest('label').hidden=old;
-  fields.issued.disabled=old;
-  fields.issued.required=!old&&(!editingLoanId||Boolean(data.loans.find(l=>l.id===editingLoanId)?.issued));
-  $('countLabel').textContent=old?'Número de cuotas pendientes':({week:'Número de semanas',fortnight:'Número de quincenas',month:'Número de meses'}[fields.frequency.value]);
-  if(rate!==undefined){
-    $('preview').textContent='Interés mensual: '+rate/100+' %'+(total>0?
-      ' · Cuota: '+money(cents(fields.amount.value))+' · Interés total: '+money(total-principal)+' · Total a pagar: '+money(total):'');
-    return;
-  }
-  $('preview').textContent=total>0?'Total de las cuotas: '+money(total)
-    +(!old&&fields.principal.value?' · Diferencia: '+money(total-cents(fields.principal.value)):''):'';
-}
-let editingLoanId=null;
-function fillFirstPaymentDate(){
-  const fields=loan.elements;
-  const issued=fields.issued.value;
-  if(!validDate(issued)){
-    fields.first.value='';
-    return;
-  }
-  const date=new Date(issued+'T12:00:00Z');
-  const days={week:7,fortnight:15,month:30}[fields.frequency.value];
-  date.setUTCDate(date.getUTCDate()+days);
-  fields.first.value=iso(date);
-}
-function resetLoanForm(){
-  editingLoanId=null;
-  loan.reset();
-  loan.elements.amount.readOnly=false;
-  loan.elements.person.disabled=false;
-  loan.elements.type.disabled=false;
-  loan.elements.issued.value=today();
-  $('loanTitle').textContent='Registrar préstamo';
-  $('cancelLoanEdit').hidden=true;
-  fillFirstPaymentDate();
-  preview();
-}
-$('cancelLoanEdit').onclick=resetLoanForm;
-function editLoan(item){
-  resetLoanForm();
-  editingLoanId=item.id;
-  const fields=loan.elements;
-  fields.person.value=item.person;
-  fields.type.value=item.type;
-  const original=item.type==='new'?item.principal:item.originalPrincipal;
-  fields.principal.value=original?original/100:'';
-  fields.amount.readOnly=false;
-  fields.issued.value=item.issued??'';
-  fields.frequency.value=item.frequency;
-  fields.count.value=item.count;
-  fields.amount.value=item.amount/100;
-  fields.first.value=item.first;
-  fields.person.disabled=true;
-  fields.type.disabled=true;
-  $('loanTitle').textContent='Editar préstamo';
-  $('cancelLoanEdit').hidden=false;
-  $('clientLoans').close();
-  location.hash='nuevo';
-  preview();
-}
-async function deleteLoan(item){
-  const current=data.loans.find(l=>l.id===item.id);
-  if(!current||current.payments.length) return;
-  if(!confirm('¿Eliminar este préstamo de '+current.person+'? '+money(current.principal)
-    +(current.type==='old'?' volverá al saldo anterior por detallar.':' volverá a la caja.'))) return;
-  if(await save({...data,loans:data.loans.filter(l=>l.id!==current.id)})){
-    if(editingLoanId===current.id) resetLoanForm();
-    const status=$('clientLoanStatus');
-    if(status) status.textContent='Préstamo eliminado.';
-  }
-}
-loan.oninput=event=>{
-  const fields=loan.elements;
-  if(!editingLoanId){
-    const isNew=fields.type.value==='new';
-    if(event.target===fields.frequency&&isNew){
-      fields.count.value={week:4,fortnight:2,month:1}[fields.frequency.value];
-    }
-    if(isNew&&[fields.frequency,fields.issued,fields.type].includes(event.target)) fillFirstPaymentDate();
-    if(!isNew&&event.target===fields.type) fields.first.value='';
-  }
-  preview();
-};
-loan.onsubmit=async event=>{
-  event.preventDefault();
-  const editing=data.loans.find(l=>l.id===editingLoanId);
-  if(editingLoanId&&!editing) return fail('El préstamo ya no está disponible.');
-  const f=new FormData(loan), person=editing?.person??f.get('person').trim(), type=editing?.type??f.get('type');
-  const count=Number(f.get('count')), first=f.get('first');
-  const entered=cents(f.get('principal'));
-  const rate=loanRate(type,editing);
-  const amount=rate===undefined?cents(f.get('amount')):
-    installmentWithInterest(entered,f.get('frequency'),count,rate);
-  if(!Number.isSafeInteger(amount)||amount<1||amount>10000000000) return fail('El monto por cuota debe estar dentro del rango permitido.');
-  const principal=type==='old'?amount*count:entered;
-  const originalPrincipal=type==='old'&&entered>0?entered:undefined;
-  if(!data.friends.some(f=>f.person===person)) return fail('Selecciona un cliente registrado.');
-  const issued=f.get('issued');
-  if(issued&&editing?.payments.some(p=>p.date<issued)) return fail('La fecha de desembolso debe ser igual o anterior a los abonos.');
-  if(issued&&first<issued) return fail('La primera cuota debe vencer en la fecha de desembolso o después.');
-  if(principal>10000000000) return fail('El monto excede el máximo permitido.');
-  if(type==='new'&&principal>cash(data.loans)+(editing?.principal??0)) return fail('El desembolso supera la caja disponible.');
-  if(editing&&amount*count<totalPaid(editing)) return fail('El total de cuotas debe cubrir los abonos registrados.');
-  if(type==='old'&&principal>opening(data.loans)+(editing?.principal??0)) return fail('Las cuotas superan el saldo inicial por detallar.');
-  if(amount*count<principal) return fail('El total de las cuotas debe cubrir el monto entregado.');
-  const id=editing?.id??(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2));
-  const item={id,person,type,principal,amount,count,first,frequency:f.get('frequency'),payments:editing?.payments??[],...(issued?{issued}:{}),...(originalPrincipal?{originalPrincipal}:{}),...(rate===undefined?{}:{monthlyRate:rate})};
-  const loans=editing?data.loans.map(l=>l.id===editing.id?item:l):[...data.loans,item];
-  if(await save({...data,loans})){
-    resetLoanForm();
-    fail(editing?'Préstamo actualizado.':'Préstamo registrado.');
-  }
-};
-let editingPayment=null;
-function clearPaymentEdit(){
-  editingPayment=null;
-  pay.elements.id.disabled=false;
-  pay.elements.amount.value='';
-  pay.elements.date.value=today();
-  $('savePayment').textContent='Guardar abono';
-  $('cancelPaymentEdit').hidden=true;
-  render();
-}
-$('cancelPaymentEdit').onclick=clearPaymentEdit;
-function editPayment(entry){
-  editingPayment=entry;
-  render();
-  pay.elements.id.value=entry.loanId;
-  pay.elements.id.disabled=true;
-  pay.elements.amount.value=entry.amount/100;
-  pay.elements.date.value=entry.date;
-  $('savePayment').textContent='Guardar cambios';
-  $('cancelPaymentEdit').hidden=false;
-  fail('');
-  pay.elements.amount.focus();
-}
-async function deletePayment(entry){
-  const item=data.loans.find(l=>l.id===entry.loanId);
-  if(!item?.payments.includes(entry.payment)) return fail('El abono ya no está disponible.');
-  const loans=data.loans.map(l=>l===item?{...l,payments:l.payments.filter(p=>p!==entry.payment)}:l);
-  if(cash(loans)<0) return fail('Si eliminas este abono, la caja quedaría en negativo.');
-  if(!confirm('¿Eliminar el abono de '+money(entry.amount)+' de '+entry.person+
-    ' del '+dateFormat(entry.date)+'? El importe volverá al saldo pendiente.')) return;
-  if(await save({...data,loans})){
-    if(editingPayment?.payment===entry.payment) clearPaymentEdit();
-    fail('Abono eliminado.');
-  }
-}
-pay.onsubmit=async event=>{
-  event.preventDefault();
-  const previous=editingPayment?.payment;
-  const item=data.loans.find(l=>l.id===pay.elements.id.value);
-  const amount=cents(pay.elements.amount.value), date=pay.elements.date.value;
-  if(previous&&!item?.payments.includes(previous)) return fail('El abono ya no está disponible.');
-  if(!item||amount<=0||amount>remaining(item)+(previous?.amount??0))
-    return fail('El monto debe ser positivo y caber en el saldo disponible para este abono.');
-  if(!validDate(date)||date>today()) return fail('Ingresa una fecha de recepción válida que no sea futura.');
-  if(item.issued&&date<item.issued) return fail('La fecha del abono debe ser igual o posterior al desembolso.');
-  const payments=previous?item.payments.map(p=>p===previous?{...p,amount,date}:p):[...item.payments,{amount,date}];
-  const loans=data.loans.map(l=>l===item?{...l,payments}:l);
-  if(cash(loans)<0) return fail('Si reduces este abono, la caja quedaría en negativo.');
-  if(await save({...data,loans})){
-    if(previous) clearPaymentEdit();
-    else pay.elements.amount.value='';
-    fail(previous?'Abono actualizado.':'Abono registrado.');
-  }
-};
-const reportHeaders=['N.º','Cliente','Tipo','Frecuencia','Fecha de desembolso','Primera cuota','Número de cuotas','Monto prestado original (S/)','Capital o saldo inicial (S/)','Cuota (S/)','Total pactado (S/)','Abonos recibidos (S/)','Saldo pendiente (S/)','Cuotas vencidas (S/)','Estado'];
-function reportMoney(value){return (value/100).toFixed(2);}
-function reportRows(loans,current){
-  return loans.map((loan,index)=>{
-    let paid=sum(loan.payments,p=>p.amount),overdue=0;
-    for(let i=0;i<loan.count;i++){
-      const unpaid=Math.max(loan.amount-paid,0);
-      paid=Math.max(paid-loan.amount,0);
-      if(due(loan.first,loan.frequency,i)<current) overdue+=unpaid;
-    }
-    const balance=remaining(loan);
-    return [index+1,loan.person,loan.type==='old'?'Saldo anterior':'Nuevo desembolso',
-      {week:'Semanal',fortnight:'Quincenal',month:'Mensual'}[loan.frequency],
-      loan.issued||'',loan.first,loan.count,loan.originalPrincipal?reportMoney(loan.originalPrincipal):'',
-      reportMoney(loan.principal),reportMoney(loan.amount),reportMoney(loan.amount*loan.count),
-      reportMoney(sum(loan.payments,p=>p.amount)),reportMoney(balance),reportMoney(overdue),
-      balance===0?'Pagado':overdue>0?'Vencido':'Pendiente'];
-  });
-}
-function reportCsv(rows){
-  const numericColumns=new Set([0,6,7,8,9,10,11,12,13]);
-  const escape=value=>{
-    let cell=String(value);
-    if(/^[\s]*[=+@-]/.test(cell)) cell="'"+cell;
-    return '"'+cell.replace(/"/g,'""')+'"';
-  };
-  const lines=[reportHeaders.map(escape).join(';'),...rows.map(row=>
-    row.map((value,index)=>numericColumns.has(index)?String(value):escape(value)).join(';'))];
-  return '\uFEFFsep=;\r\n'+lines.join('\r\n');
-}
-$('downloadReport').onclick=()=>{
-  if(!ready) return fail('El registro no está disponible para descargar.');
-  const csv=reportCsv(reportRows(data.loans,today()));
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  const link=document.createElement('a');
-  link.href=url;
-  link.download='reporte-prestamos-'+today()+'.csv';
-  link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-};
-$('backup').onclick=()=>{
-  if(!ready) return fail('Restaura una copia antes de exportar el registro.');
-  const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
-  const link=document.createElement('a');
-  link.href=url;
-  link.download='prestamos-'+today()+'.json';
-  link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-};
-$('restore').onchange=async event=>{
-  const file=event.target.files[0];
-  event.target.value='';
-  if(!file) return;
-  let snapshot;
-  try{snapshot=JSON.parse(await file.text());}catch{return fail('La copia no contiene un registro válido.');}
-  if(!valid(snapshot)) return fail('La copia no contiene un registro válido.');
-  if(confirm('¿Reemplazar los datos actuales por esta copia de respaldo?')){
-    if(await save(withFriends(snapshot),true)) fail('Copia restaurada.');
-  }
-};
-function showRoute(){
-  const routes=[...document.querySelectorAll('.route')];
-  const hash=location.hash==='#amigos'?'#clientes':location.hash;
-  const active=routes.find(route=>'#'+route.id===hash)||$('panel');
-  if(active.id!=='clientes'&&$('clientLoans').open) $('clientLoans').close();
-  for(const route of routes) route.hidden=route!==active;
-  for(const link of document.querySelectorAll('nav a')){
-    if(link.hash==='#'+active.id){
-      link.setAttribute('aria-current','page');
-      $('pageTitle').textContent=link.getAttribute('aria-label');
-    }else link.removeAttribute('aria-current');
-  }
-  $('pageSubtitle').hidden=active.id!=='panel';
-  window.scrollTo(0,0);
-}
-$('today').dateTime=today();
-$('today').textContent=new Intl.DateTimeFormat('es-PE',{dateStyle:'long',timeZone:'America/Lima'}).format(new Date());
-window.addEventListener('hashchange',showRoute);
-fillFirstPaymentDate();
-render();
-showRoute();
-</script></html>
-
+<?php foreach ($styles as $style): ?><link rel="stylesheet" href="<?= htmlspecialchars($style, ENT_QUOTES) ?>"><?php endforeach; ?>
+</head>
+<body>
+<div id="root"></div>
+<script>window.__PRESTAMOS_BOOTSTRAP__ = <?= $bootstrap ?>;</script>
+<script type="module" src="<?= htmlspecialchars($script, ENT_QUOTES) ?>"></script>
+</body>
+</html>

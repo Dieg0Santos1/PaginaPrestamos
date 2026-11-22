@@ -1,13 +1,75 @@
-# Instalar Mis préstamos en cPanel
+# Mis préstamos: React + Vite en cPanel
 
-Requisitos de la versión web: PHP 8.2 o posterior, extensión pdo_mysql, MySQL o MariaDB y HTTPS.
+La interfaz está en `../react-app`. PHP conserva el inicio de sesión y la API que lee y guarda el JSON en MySQL. La tabla `registro` y el formato de respaldo siguen siendo los mismos.
 
-1. Desde la versión local, descarga la copia JSON en Respaldo.
-2. En cPanel, crea una base y un usuario en Database Wizard. La aplicación necesita SELECT y UPDATE. Abre phpMyAdmin, selecciona la base e importa base.sql.
-3. En cPanel → Dominios, crea prestamos.dadtvplay.com con una raíz propia en public_html/prestamos. Sube index.php a esa raíz. Haz una copia de prestamos-config.example.php con el nombre prestamos-config.php y súbela al directorio de inicio de la cuenta, junto a public_html y fuera de la raíz pública. La ruta de configuración en index.php supone esta estructura. Si eliges otra raíz, ajusta esa ruta antes de publicar.
-4. Edita el archivo privado con el nombre completo de la base, usuario y contraseña de MySQL. En login_user coloca tu usuario de acceso y en login_password una contraseña única de al menos 12 caracteres. Mantén este archivo fuera de public_html y limita sus permisos de lectura a los necesarios para PHP. Si ya usabas la versión con access_key, reemplaza esa entrada por login_user y login_password antes de subir el nuevo index.php.
-5. Activa el certificado SSL y la redirección HTTPS para el subdominio. Entra a https://prestamos.dadtvplay.com/ con tu usuario y contraseña. Importa el JSON una vez desde Respaldo. Restaurar reemplaza el registro compartido.
-6. Abre la misma dirección desde el celular con datos móviles. Los cambios aparecen en el otro dispositivo al volver a abrir o recargar. Si dos dispositivos guardan sobre la misma versión, el segundo debe actualizar antes de reintentar.
+## Probar en esta PC
 
-Solo index.php va en la carpeta pública. Guarda el respaldo y la configuración fuera de ella. Después de importar, usa la versión del dominio para trabajar con el registro compartido.
+Desde `PaginaPrestamos/react-app` ejecuta:
 
+```powershell
+npm.cmd install
+npm.cmd run dev
+```
+
+Abre la dirección que muestra Vite, normalmente `http://127.0.0.1:5173/`. Esta prueba guarda los datos en el navegador local. Puedes importar una copia JSON desde Respaldo. La versión de Vite no usa la base de datos del hosting.
+
+## Compilar y publicar
+
+1. En `PaginaPrestamos/react-app`, ejecuta `npm.cmd run build`. Esto genera `../version-cpanel/react-dist/manifest.json` y los archivos de `react-dist/assets/`. La compilación elimina el HTML de Vite para que la entrada pública siga siendo `index.php`.
+2. En cPanel, comprueba que el subdominio `prestamos.dadtvplay.com` tiene raíz propia en `public_html/prestamos` y HTTPS activo.
+3. En esa raíz, reemplaza `index.php` y sube la carpeta **`react-dist` completa**. La estructura debe ser:
+
+   También puedes subir `../prestamos-react-cpanel.zip` a esa raíz y extraerlo allí; contiene exactamente esos archivos.
+
+   ```text
+   /home/usuario/
+   ├── prestamos-config.php
+   └── public_html/prestamos/
+       ├── index.php
+       └── react-dist/
+           ├── manifest.json
+           └── assets/
+               ├── index-....js
+               └── index-....css
+   ```
+
+4. Mantén `prestamos-config.php` fuera de `public_html`. Copia `prestamos-config.example.php` como punto de partida y coloca allí los datos de MySQL, `login_user` y una `login_password` de al menos 12 caracteres. **No subas el archivo de ejemplo con valores reales.**
+5. Si todavía no existe la tabla, importa `base.sql` en la base mediante phpMyAdmin. El usuario MySQL necesita `SELECT`, `UPDATE` e `INSERT` para el funcionamiento normal con avisos automáticos.
+6. Abre `https://prestamos.dadtvplay.com/`, inicia sesión y recarga con Ctrl + F5. Los registros que ya están en MySQL se muestran sin volver a importar el respaldo.
+
+Al actualizar la interfaz, repite la compilación y reemplaza `index.php` y `react-dist`. No importes de nuevo un respaldo a menos que quieras reemplazar el registro compartido. El código fuente `react-app`, `node_modules` y el JSON de respaldo no se suben a la carpeta pública.
+
+## Activar avisos automáticos por WhatsApp
+
+Esta aplicación puede usar **la misma sesión conectada** de WasenderAPI que otra página. No crea, reinicia ni desconecta sesiones. Mantiene su propia cola en la tabla `whatsapp_outbox` y envía como máximo un mensaje por ejecución del cron. Ambas páginas comparten el límite de envíos de esa sesión; una respuesta HTTP 429 se vuelve a intentar más tarde.
+
+1. Importa de nuevo `base.sql` con phpMyAdmin para crear **solo la tabla nueva `whatsapp_outbox`**. `CREATE TABLE IF NOT EXISTS` y `INSERT IGNORE` conservan los datos existentes de `registro`. Comprueba que el usuario MySQL tiene permiso `INSERT` además de `SELECT` y `UPDATE`.
+2. Edita el archivo privado `/home/USUARIO/prestamos-config.php`: agrega `wasender_api_key` con la **clave API de la sesión existente** de WasenderAPI y cambia `whatsapp_auto_enabled` a `true`. No uses el token de otra plataforma ni coloques la clave en React o en `public_html`.
+3. Sube `prestamos-whatsapp-cron.php` a `/home/USUARIO/`, junto a `prestamos-config.php`, **fuera de `public_html`**.
+4. En cPanel → **Cron Jobs**, crea una tarea cada minuto (`* * * * *`) con este comando, ajustando el usuario y la ruta de PHP 8.2 o posterior de tu hosting:
+
+   ```text
+   /usr/local/bin/php -q /home/USUARIO/prestamos-whatsapp-cron.php
+   ```
+
+5. En la ficha de cada cliente que aceptó avisos, registra su celular peruano y marca **«El cliente autorizó recibir avisos…»**. Los clientes existentes empiezan sin esta marca. El sistema no manda mensajes automáticos a clientes sin teléfono válido o sin autorización.
+
+Al crear un préstamo, se prepara un aviso y el cron lo envía en su siguiente ejecución. El día de vencimiento, el cron prepara un recordatorio de cada cuota aún pendiente a partir de las **9:00 a. m., hora de Lima**. No se repiten avisos para la misma cuota. Restaurar un respaldo no vuelve a generar mensajes de creación.
+
+Puedes comprobar los resultados en `whatsapp_outbox` mediante phpMyAdmin: `accepted` significa que WasenderAPI aceptó la solicitud, no que WhatsApp confirmó la entrega. `failed`, `skipped` y `unknown` requieren revisión. El cron no reenvía automáticamente los casos `unknown` porque podrían haber salido aunque se perdiera la respuesta.
+
+### Marcar en bloque a clientes que ya autorizaron los avisos
+
+Si todos los clientes existentes ya aceptaron recibir mensajes, sube `prestamos-autorizar-clientes.php` a `/home/USUARIO/`, junto a la configuración privada. Desde **Terminal** de cPanel, revisa primero cuántas fichas cambiaría:
+
+```sh
+/usr/local/bin/php -q /home/USUARIO/prestamos-autorizar-clientes.php
+```
+
+Para aplicar el cambio una sola vez:
+
+```sh
+/usr/local/bin/php -q /home/USUARIO/prestamos-autorizar-clientes.php --apply
+```
+
+El script crea antes un respaldo privado `prestamos-antes-autorizacion-*.json`, actualiza el registro y aumenta su revisión para que las pestañas abiertas pidan recargar antes de guardar. No envía de nuevo avisos de creación de préstamos antiguos. Recarga la página después. Si algunos clientes no dieron permiso, márcalos individualmente desde **Clientes → Editar** en vez de ejecutar el cambio en bloque.
