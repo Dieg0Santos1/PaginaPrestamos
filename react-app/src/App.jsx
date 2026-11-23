@@ -46,15 +46,40 @@ function WhatsAppButton({item,data}) {
 }
 
 function clientLoansMessage(friend,loans,schedule,current) {
-  const active=loans.map((loan,index)=>({loan,index})).filter(({loan})=>loan.person===friend.person&&remaining(loan)>0);
+  const own=loans.map((loan,index)=>({loan,index})).filter(({loan})=>loan.person===friend.person);
   const lines=[`Hola ${friend.person}, te comparto el estado de tus préstamos al ${dateFormat(current)}.`];
-  if (!active.length) lines.push('No tienes préstamos con saldo pendiente.');
-  for (const {loan,index} of active) {
-    const next=schedule.find(item=>item.loan.id===loan.id&&item.left>0);
-    lines.push(`Préstamo N.º ${index+1} (${frequencyNames[loan.frequency]}): saldo pendiente ${money(remaining(loan))}.`);
-    if (next) lines.push(`Cuota pendiente con vencimiento ${dateFormat(next.date)}: ${money(next.left)}.`);
+  if (!own.length) lines.push('No tienes préstamos registrados.');
+  for (const {loan,index} of own) {
+    const parts=schedule.filter(item=>item.loan.id===loan.id).sort((a,b)=>a.index-b.index);
+    const payments=[...loan.payments].sort((a,b)=>a.date.localeCompare(b.date)||(a.createdAt??0)-(b.createdAt??0));
+    const paidDates=[];
+    let paid=0,completed=0;
+    for (const payment of payments) {
+      paid+=payment.amount;
+      while (completed<loan.count&&paid>=loan.amount*(completed+1)) paidDates[completed++]=payment.date;
+    }
+    lines.push('',`Préstamo N.º ${index+1} (${frequencyNames[loan.frequency]}):`);
+    if (payments.length) {
+      lines.push('Abonos realizados:');
+      for (const payment of payments) lines.push(`- ${dateFormat(payment.date)}: ${money(payment.amount)}.`);
+    }
+    if (paidDates.length) {
+      lines.push('Cuotas pagadas:');
+      for (const part of parts.filter(item=>item.left===0)) {
+        lines.push(`- Cuota ${part.index+1}: ${money(part.amount)}, pagada el ${dateFormat(paidDates[part.index])}.`);
+      }
+    }
+    const pending=parts.filter(item=>item.left>0);
+    if (pending.length) {
+      lines.push('Cuotas pendientes:');
+      for (const part of pending) {
+        const partial=part.left<part.amount?` (abonado ${money(part.amount-part.left)})`:'';
+        lines.push(`- Cuota ${part.index+1}: vence ${dateFormat(part.date)}, pendiente ${money(part.left)}${partial}.`);
+      }
+    }
+    lines.push(`Saldo pendiente del préstamo: ${money(remaining(loan))}.`);
   }
-  lines.push('',`Saldo total pendiente: ${money(sum(active,({loan})=>remaining(loan)))}.`);
+  lines.push('',`Saldo total pendiente: ${money(sum(own,({loan})=>remaining(loan)))}.`);
   return lines.join('\n');
 }
 
