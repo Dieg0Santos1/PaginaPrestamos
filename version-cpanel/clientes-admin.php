@@ -59,29 +59,6 @@ try {
     }
     $input = json_decode(file_get_contents('php://input'), true);
     if (!is_array($input)) { http_response_code(400); exit; }
-    if ($action === 'access') {
-        $dni = $input['dni'] ?? '';
-        if (!is_string($dni) || !preg_match('/^\d{8}$/D', $dni)) {
-            http_response_code(400);
-            exit;
-        }
-        $row = $db->query('SELECT datos FROM registro WHERE id=1')->fetch(PDO::FETCH_ASSOC);
-        $data = json_decode($row['datos'] ?? '{}', true);
-        $matches = array_filter($data['friends'] ?? [], static fn ($friend) => ($friend['dni'] ?? '') === $dni);
-        if (count($matches) !== 1) {
-            http_response_code(409);
-            echo json_encode(['error'=>'El DNI debe pertenecer a un solo cliente registrado.']);
-            exit;
-        }
-        $key = rtrim(strtr(base64_encode(random_bytes(18)), '+/', '-_'), '=');
-        $hash = password_hash($key, PASSWORD_DEFAULT);
-        $friend = reset($matches);
-        $statement = $db->prepare('INSERT INTO cliente_accesos (dni, nombre_cliente, clave_hash) VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE nombre_cliente=VALUES(nombre_cliente), clave_hash=VALUES(clave_hash)');
-        $statement->execute([$dni, $friend['person'], $hash]);
-        echo json_encode(['clave'=>$key], JSON_THROW_ON_ERROR);
-        exit;
-    }
     if ($action === 'review') {
         $id = filter_var($input['id'] ?? null, FILTER_VALIDATE_INT);
         $status = $input['estado'] ?? '';
@@ -102,4 +79,3 @@ try {
     http_response_code(503);
     echo json_encode(['error'=>'No se pudo completar la operación.']);
 }
-

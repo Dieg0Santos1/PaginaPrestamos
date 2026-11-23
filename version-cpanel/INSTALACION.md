@@ -45,11 +45,11 @@ Al actualizar la interfaz, repite la compilación y reemplaza `index.php`, `clie
 
 1. Importa de nuevo `base.sql` en phpMyAdmin. Crea las tablas `cliente_accesos` y `comprobantes_yape` sin reemplazar el registro de préstamos. El usuario de MySQL necesita `SELECT`, `INSERT`, `UPDATE` y `DELETE` sobre `cliente_accesos`, y `SELECT`, `INSERT` y `UPDATE` sobre `comprobantes_yape`. Comprueba que PHP tiene la extensión `fileinfo` y que los límites de subida permiten archivos de hasta 4 MB.
 2. Sube `cliente.php` y `clientes-admin.php` junto a `index.php` en la raíz del subdominio. La carpeta `react-dist` debe contener la compilación nueva. Los comprobantes se almacenan en MySQL, no en una carpeta pública.
-3. En el panel, registra un DNI distinto de ocho dígitos por cliente. En **Clientes → Crear acceso**, genera una clave individual. Cópiala y entrégala directamente al cliente. Al generar otra clave para el mismo DNI, la anterior deja de funcionar.
+3. En **Clientes → Nuevo cliente**, escribe un DNI distinto de ocho dígitos y una contraseña de al menos ocho caracteres junto al DNI. Al guardar, el acceso queda creado. Para cambiar la contraseña de un cliente existente, edita su ficha y escribe una nueva; si la dejas vacía, conserva la actual. Entrega el DNI y la contraseña directamente al cliente.
 4. El cliente entra a `https://prestamos.dadtvplay.com/cliente.php` con su DNI y su clave. Puede ver únicamente los préstamos vinculados a su ficha y enviar una captura JPG, PNG o WebP de hasta 4 MB, indicando el préstamo y el monto enviado.
 5. En **Comprobantes**, abre la captura y comprueba la operación en Yape. Después marca el comprobante como verificado o rechazado. El estado verificado confirma la revisión de la captura. Registra el abono en **Pagos** cuando hayas comprobado el ingreso de dinero.
 
-No publiques un respaldo JSON de clientes ni guardes las claves de acceso en el repositorio. La clave de un cliente se muestra al administrador una sola vez. La página local de Vite no tiene acceso al portal PHP, por lo que estas funciones se prueban en cPanel o en un servidor PHP con MySQL.
+No publiques un respaldo JSON de clientes ni guardes las contraseñas de acceso en el repositorio. Las contraseñas se guardan como hashes en la base de datos y no aparecen en las fichas ni en los respaldos. La página local de Vite no tiene acceso al portal PHP, por lo que estas funciones se prueban en cPanel o en un servidor PHP con MySQL.
 
 ## Activar avisos automáticos por WhatsApp
 
@@ -85,4 +85,3 @@ Para aplicar el cambio una sola vez:
 ```
 
 El script crea antes un respaldo privado `prestamos-antes-autorizacion-*.json`, actualiza el registro y aumenta su revisión para que las pestañas abiertas pidan recargar antes de guardar. No envía de nuevo avisos de creación de préstamos antiguos. Recarga la página después. Si algunos clientes no dieron permiso, márcalos individualmente desde **Clientes → Editar** en vez de ejecutar el cambio en bloque.
-

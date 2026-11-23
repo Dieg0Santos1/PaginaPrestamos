@@ -81,6 +81,39 @@ try {
             http_response_code(409);
             exit;
         }
+        $accessChange = $request->client_access ?? null;
+        if ($accessChange !== null) {
+            $fields = ['dni', 'person', 'previous_dni', 'previous_person', 'password'];
+            foreach ($fields as $field) {
+                if (!is_string($accessChange->$field ?? null)) {
+                    $db->rollBack();
+                    http_response_code(400);
+                    exit;
+                }
+            }
+            $dni = $accessChange->dni;
+            $oldDni = $accessChange->previous_dni;
+            $passwordClient = $accessChange->password;
+            if (($dni !== '' && !preg_match('/^\d{8}$/D', $dni))
+                || ($oldDni !== '' && !preg_match('/^\d{8}$/D', $oldDni))
+                || ($passwordClient !== '' && ($dni === '' || strlen($passwordClient) < 8 || strlen($passwordClient) > 72))
+                || ($dni !== '' && $passwordClient === '' && ($oldDni !== $dni || $accessChange->previous_person === ''))) {
+                $db->rollBack();
+                http_response_code(400);
+                exit;
+            }
+            $newMatches = array_filter($request->data->friends,
+                static fn ($friend) => ($friend->dni ?? '') === $dni && ($friend->person ?? '') === $accessChange->person);
+            $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
+            $oldMatches = array_filter($oldData->friends ?? [],
+                static fn ($friend) => ($friend->dni ?? '') === $oldDni && ($friend->person ?? '') === $accessChange->previous_person);
+            if (count($newMatches) !== 1 || ($accessChange->previous_person !== '' && count($oldMatches) !== 1)
+                || ($accessChange->previous_person === '' && $oldDni !== '')) {
+                $db->rollBack();
+                http_response_code(400);
+                exit;
+            }
+        }
         $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
             ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
@@ -157,6 +190,21 @@ try {
                 $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
             }
         }
+        if ($accessChange !== null) {
+            if ($dni !== '' && $passwordClient !== '') {
+                $hash = password_hash($passwordClient, PASSWORD_DEFAULT);
+                $saveAccess = $db->prepare('INSERT INTO cliente_accesos (dni, nombre_cliente, clave_hash) VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE nombre_cliente=VALUES(nombre_cliente), clave_hash=VALUES(clave_hash)');
+                $saveAccess->execute([$dni, $accessChange->person, $hash]);
+            } elseif ($dni !== '' && $accessChange->person !== $accessChange->previous_person) {
+                $renameAccess = $db->prepare('UPDATE cliente_accesos SET nombre_cliente=? WHERE dni=? AND nombre_cliente=?');
+                $renameAccess->execute([$accessChange->person, $dni, $accessChange->previous_person]);
+            }
+            if ($oldDni !== '' && $oldDni !== $dni) {
+                $removeOldAccess = $db->prepare('DELETE FROM cliente_accesos WHERE dni=? AND nombre_cliente=?');
+                $removeOldAccess->execute([$oldDni, $accessChange->previous_person]);
+            }
+        }
         $db->commit();
         try {
             $currentClients = [];
@@ -215,4 +263,3 @@ $styles = array_map(static fn ($file) => 'react-dist/'.$file, $entry['css'] ?? [
 <script type="module" src="<?= htmlspecialchars($script, ENT_QUOTES) ?>"></script>
 </body>
 </html>
-
