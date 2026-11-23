@@ -29,7 +29,7 @@ function Table({headers, rows, emptyText}) {
 }
 
 function Metric({label,value,detail,accent=false}) {
-  return <section className={accent?'accent-card':''}><span>{label}</span><div className="metric">{value}</div><small>{detail}</small></section>;
+  return <section className={accent?'accent-card':''}><span>{label}</span><div className="metric">{value}</div>{detail&&<small>{detail}</small>}</section>;
 }
 
 function WhatsAppButton({item,data}) {
@@ -251,7 +251,7 @@ export default function App() {
       {notice&&<p className="notice" role="status">{notice}</p>}
       {!data ? <section><h2>Registro no disponible</h2><p>Restaura una copia válida desde Respaldo.</p><input type="file" accept=".json,application/json" onChange={event=>{restore(event.target.files[0]);event.target.value='';}} /></section> : <>
       {route==='panel'&&<>
-        <div className="metrics"><Metric label="Caja disponible" value={money(cash(data))} detail={`Saldo de apertura: ${money(data.initialCash??0)}`} accent/><Metric label="Por cobrar en total" value={money(opening(data)+sum(loans,remaining))} detail={`${money(opening(data))} de saldo inicial por detallar`}/><Metric label="Capital prestado pendiente" value={money(sum(newLoans,loan=>loan.principal)-recovered)} detail="Capital identificado desde los desembolsos registrados"/><Metric label="Pagos recibidos" value={money(sum(loans,totalPaid))} detail="Total de abonos registrados"/></div>
+        <div className="metrics"><Metric label="Caja disponible" value={money(cash(data))} accent/><Metric label="Por cobrar en total" value={money(opening(data)+sum(loans,remaining))}/><Metric label="Capital prestado pendiente" value={money(sum(newLoans,loan=>loan.principal)-recovered)}/><Metric label="Pagos recibidos" value={money(sum(loans,totalPaid))}/></div>
         <div className="dashboard-grid three"><section><h2>Ingreso / egreso de caja</h2><div className="cash-entry-row"><label>Monto (S/)<input type="number" min=".01" max="100000000" step=".01" value={cashAmount} onChange={event=>setCashAmount(event.target.value)} placeholder="0.00"/></label><label>Descripción<input type="text" maxLength="200" value={cashDescription} onChange={event=>setCashDescription(event.target.value)} placeholder="Motivo del movimiento"/></label></div><div className="buttons cash-actions"><button disabled={saving} onClick={()=>changeCash('income')}>Ingreso</button><button className="danger" disabled={saving} onClick={()=>changeCash('expense')}>Egreso</button><button className="secondary" onClick={()=>setCashHistory(true)}>Movimientos</button></div></section>
           <section><h2>Interés mensual</h2><form onSubmit={saveRate}><label>Tasa mensual (%)<input type="number" min="0" step=".01" value={rate} onChange={event=>setRate(event.target.value)}/></label><button disabled={saving}>Guardar tasa</button></form></section>
           <Metric label="Caja disponible + por cobrar" value={money(cash(data)+opening(data)+sum(loans,remaining))} detail="Suma de los dos saldos del panel"/></div>
