@@ -11,6 +11,10 @@ const datePlusDays = (value,days) => { const date=new Date(`${value}T12:00:00Z`)
 const loanLabel = (loan,index) => `${loan.person} · N.º ${index+1} · ${frequencyNames[loan.frequency]} · ${dateFormat(loan.first)} · ${money(remaining(loan))} pendiente`;
 const initialLoan = () => ({person:'',type:'new',principal:'',issued:today(),frequency:'week',count:'4',amount:'',first:firstDue(today(),'week')});
 const initialPayment = () => ({loanId:'',amount:'',date:today()});
+// Corte del 22/11/2026: S/ 10,190 por cobrar incluyen 20 % de interés.
+// En ese corte ya había S/ 1,600 de capital en préstamos nuevos.
+const capitalBase = Math.round(1019000 / 1.2);
+const capitalNuevoEnCorte = 160000;
 
 function initialData() {
   const server = window.__PRESTAMOS_BOOTSTRAP__;
@@ -117,8 +121,7 @@ export default function App() {
   const payments = useMemo(() => data ? paymentsOf(data) : [],[data]);
   const newLoans = loans.filter(loan => loan.type === 'new');
   const recovered = sum(newLoans,loan => Math.min(loan.principal,totalPaid(loan)));
-  const previousCapital = sum(loans.filter(loan => loan.type === 'old' && loan.originalPrincipal),
-    loan => Math.max(0, Math.min(loan.originalPrincipal, loan.principal) - totalPaid(loan)));
+  const capitalPrestadoPendiente = capitalBase + sum(newLoans,loan=>loan.principal) - recovered - capitalNuevoEnCorte;
   const overdue = schedule.filter(item => item.left && item.date < current);
   const payable = loans.map((loan,index) => ({loan,label:loanLabel(loan,index)}))
     .filter(option => remaining(option.loan)>0 || editingPayment?.loan.id===option.loan.id);
@@ -253,7 +256,7 @@ export default function App() {
       {notice&&<p className="notice" role="status">{notice}</p>}
       {!data ? <section><h2>Registro no disponible</h2><p>Restaura una copia válida desde Respaldo.</p><input type="file" accept=".json,application/json" onChange={event=>{restore(event.target.files[0]);event.target.value='';}} /></section> : <>
       {route==='panel'&&<>
-        <div className="metrics"><Metric label="Caja disponible" value={money(cash(data))} accent/><Metric label="Por cobrar en total" value={money(opening(data)+sum(loans,remaining))}/><Metric label="Capital prestado pendiente" value={money(previousCapital + sum(newLoans,loan=>loan.principal)-recovered)}/><Metric label="Pagos recibidos" value={money(sum(loans,totalPaid))}/></div>
+        <div className="metrics"><Metric label="Caja disponible" value={money(cash(data))} accent/><Metric label="Por cobrar en total" value={money(opening(data)+sum(loans,remaining))}/><Metric label="Capital prestado pendiente" value={money(capitalPrestadoPendiente)}/><Metric label="Pagos recibidos" value={money(sum(loans,totalPaid))}/></div>
         <div className="dashboard-grid three"><section><h2>Ingreso / egreso de caja</h2><div className="cash-entry-row"><label>Monto (S/)<input type="number" min=".01" max="100000000" step=".01" value={cashAmount} onChange={event=>setCashAmount(event.target.value)} placeholder="0.00"/></label><label>Descripción<input type="text" maxLength="200" value={cashDescription} onChange={event=>setCashDescription(event.target.value)} placeholder="Motivo del movimiento"/></label></div><div className="buttons cash-actions"><button disabled={saving} onClick={()=>changeCash('income')}>Ingreso</button><button className="danger" disabled={saving} onClick={()=>changeCash('expense')}>Egreso</button><button className="secondary" onClick={()=>setCashHistory(true)}>Movimientos</button></div></section>
           <section><h2>Interés mensual</h2><form onSubmit={saveRate}><label>Tasa mensual (%)<input type="number" min="0" step=".01" value={rate} onChange={event=>setRate(event.target.value)}/></label><button disabled={saving}>Guardar tasa</button></form></section>
           <Metric label="Caja disponible + por cobrar" value={money(cash(data)+opening(data)+sum(loans,remaining))} detail="Suma de los dos saldos del panel"/></div>
