@@ -53,7 +53,15 @@ Al actualizar la interfaz, repite la compilación y reemplaza `index.php`, `clie
 2. Sube `cliente.php` y `clientes-admin.php` junto a `index.php` en la raíz del subdominio. La carpeta `react-dist` debe contener la compilación nueva. Los comprobantes se almacenan en MySQL, no en una carpeta pública.
 3. En **Clientes → Nuevo cliente**, escribe un DNI distinto de ocho dígitos y una contraseña de al menos ocho caracteres en la sección de acceso, debajo de los datos de contacto. Al guardar, la clave aparece en la tabla, en la ficha al editar y en una ventana para copiarla. Para cambiarla, escribe otra en el formulario. Los accesos anteriores solo guardaban un hash y mostrarán «Clave anterior» hasta que les asignes una contraseña nueva.
 4. El cliente entra a `https://prestamos.dadtvplay.com/cliente.php` con su DNI y su clave. Puede ver únicamente los préstamos vinculados a su ficha y enviar una captura JPG, PNG o WebP de hasta 4 MB, indicando el préstamo y el monto enviado.
-5. En **Comprobantes**, abre la captura y comprueba la operación en Yape. Después marca el comprobante como verificado o rechazado. El estado verificado confirma la revisión de la captura. Registra el abono en **Pagos** cuando hayas comprobado el ingreso de dinero.
+5. En **Comprobantes**, revisa la captura y confirma el ingreso en Yape. Puedes analizarla con IA o registrar el pago manualmente desde la misma pantalla; ambos caminos muestran una confirmación antes de crear el abono.
+
+### Lectura de vouchers con IA
+
+En el archivo privado `/home/USUARIO/prestamos-config.php`, añade `'openai_api_key'=>'TU_CLAVE_API'` (sin publicarla ni subirla a GitHub). Opcionalmente puedes definir `'openai_voucher_model'=>'gpt-6.1-terra'`. PHP necesita la extensión cURL y salida HTTPS hacia `api.openai.com`. Cada clic en **Analizar voucher** hace una llamada a la API de OpenAI y puede generar un cargo según el uso de tu cuenta.
+
+La IA extrae monto, remitente, destinatario, fecha, hora y código visibles. En **Comprobantes**, revisa esos datos junto a la imagen. Confirma el ingreso en los Movimientos de tu propia cuenta Yape, corrige el monto o la fecha si hace falta y pulsa **Confirmar ingreso y registrar abono**. El sistema registra el abono y marca la captura como verificada en una sola operación; impide usar dos veces el mismo comprobante y avisa si el número de operación ya aparece en otro abono.
+
+La captura y la lectura de IA no comprueban que el dinero llegó. Si no configuras la API, puedes usar **Registrar manualmente** tras verificar el movimiento en Yape.
 
 No publiques un respaldo JSON de clientes ni guardes las contraseñas de acceso en el repositorio. Para iniciar sesión se usa un hash en `cliente_accesos`; para mostrarlas al administrador se guarda una copia cifrada en la ficha del cliente dentro de `registro`. Los respaldos JSON incluyen esa copia cifrada y deben mantenerse privados. El cifrado depende de la contraseña de MySQL del archivo privado `prestamos-config.php`; si se cambia, las claves anteriores dejarán de poder mostrarse, aunque los clientes podrán seguir ingresando con su hash. La página local de Vite no tiene acceso al portal PHP.
 

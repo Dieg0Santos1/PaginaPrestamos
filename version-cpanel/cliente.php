@@ -324,7 +324,7 @@ footer{text-align:center;color:#81959b;font-size:11px;margin-top:22px}
   <?php if (!$proofs): ?><p class="empty">Aún no enviaste comprobantes.</p><?php endif; ?>
   <ul class="proof-list">
     <?php foreach ($proofs as $proof): ?>
-    <?php $status = (string) $proof['estado']; $statusClass = $status === 'aprobado' ? 'badge-approved' : ($status === 'rechazado' ? 'badge-rejected' : 'badge-pending'); ?>
+    <?php $status = (string) $proof['estado']; $statusClass = $status === 'verificado' ? 'badge-approved' : ($status === 'rechazado' ? 'badge-rejected' : 'badge-pending'); ?>
     <li><div><strong><?= $money((int) $proof['monto_centimos']) ?></strong><small><?= $escape((new DateTimeImmutable($proof['creado']))->format('d/m/Y · H:i')) ?></small></div><span class="badge <?= $statusClass ?>"><?= $escape(ucfirst($status)) ?></span></li>
     <?php endforeach; ?>
   </ul>

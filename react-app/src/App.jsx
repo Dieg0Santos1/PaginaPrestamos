@@ -107,6 +107,8 @@ export default function App() {
   const [editingPayment,setEditingPayment] = useState(null);
   const [scheduleFilter,setScheduleFilter] = useState('today');
   const [proofs,setProofs] = useState([]);
+  const [analyzingProofId,setAnalyzingProofId] = useState(null);
+  const [proofConfirm,setProofConfirm] = useState(null);
 
   useEffect(() => { const change = () => setRoute(location.hash.slice(1) || 'panel'); window.addEventListener('hashchange',change); return () => window.removeEventListener('hashchange',change); }, []);
   useEffect(() => {
@@ -162,6 +164,53 @@ export default function App() {
       flash(status==='verificado'?'Comprobante verificado. Registra el abono en Pagos tras comprobar la operación.':'Comprobante rechazado.');
     } catch { flash('No se pudo actualizar el comprobante. Actualiza la página.'); }
   }
+  function openProofConfirm(proof,analysis=null) {
+    setProofConfirm({
+      id:Number(proof.id), proof, analysis,
+      amount:analysis?.amount??(Number(proof.monto_centimos)/100).toFixed(2),
+      date:analysis?.date??today(),
+      receipt:analysis?.receipt??'',
+      sender:analysis?.sender??'',
+      checked:false,
+    });
+  }
+  async function analyzeProof(proof) {
+    setAnalyzingProofId(Number(proof.id));
+    try {
+      const response=await fetch('clientes-admin.php?action=analyze',{
+        method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},
+        body:JSON.stringify({id:Number(proof.id)})
+      });
+      const result=await response.json();
+      if (!response.ok) throw new Error(result.error||'No se pudo analizar la imagen.');
+      openProofConfirm(proof,result);
+    } catch (error) { flash(error.message); }
+    finally { setAnalyzingProofId(null); }
+  }
+  async function confirmProofPayment() {
+    if (!proofConfirm?.checked) return flash('Confirma primero que el dinero aparece en tus movimientos de Yape.');
+    const amount=cents(proofConfirm.amount);
+    if (!Number.isSafeInteger(amount)||amount<1) return flash('Escribe un monto válido.');
+    if (!validDate(proofConfirm.date)||proofConfirm.date>today()) return flash('Revisa la fecha del pago.');
+    if (busy.current) return flash('Hay un guardado en curso.');
+    busy.current=true; setSaving(true);
+    try {
+      const response=await fetch('clientes-admin.php?action=confirm-payment',{
+        method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},
+        body:JSON.stringify({id:proofConfirm.id,monto_centimos:amount,fecha:proofConfirm.date,
+          recibo:proofConfirm.receipt.trim(),remitente:proofConfirm.sender.trim()})
+      });
+      const result=await response.json();
+      if (!response.ok) throw new Error(result.error||'No se pudo registrar el abono.');
+      if (!valid(result.data)) throw new Error('El servidor guardó el abono, pero la respuesta no se pudo mostrar. Recarga la página.');
+      revision.current=result.revision;
+      setData(withFriends(result.data));
+      setProofs(items=>items.map(item=>Number(item.id)===proofConfirm.id?{...item,estado:'verificado'}:item));
+      setProofConfirm(null);
+      flash('Abono registrado y comprobante verificado.');
+    } catch (error) { flash(error.message); }
+    finally { busy.current=false; setSaving(false); }
+  }
   async function commit(next, message, restore=false, clientAccess=null) {
     if ((!data && !restore) || busy.current) { flash('Hay un guardado en curso o el registro no está disponible.'); return false; }
     if (!valid(next)) { flash('El registro contiene datos inválidos.'); return false; }
@@ -194,6 +243,7 @@ export default function App() {
   const weekEnd = datePlusDays(current,6);
   const loans = data?.loans ?? [];
   const friends = data?.friends ?? [];
+  const proofClient = proofConfirm ? friends.find(friend=>friend.dni===proofConfirm.proof.dni) : null;
   const schedule = useMemo(() => data ? installmentsOf(data) : [],[data]);
   const payments = useMemo(() => data ? paymentsOf(data) : [],[data]);
   const newLoans = loans.filter(loan => loan.type === 'new');
@@ -404,12 +454,12 @@ export default function App() {
         <label>Fecha de recepción<input type="date" min="1900-01-01" max={current} required value={paymentForm.date} onChange={event=>setPaymentForm(form=>({...form,date:event.target.value}))}/></label>
         <div className="buttons"><button disabled={saving||!payable.length}>{editingPayment?'Guardar cambios':'Guardar abono'}</button>{editingPayment&&<button type="button" className="secondary" onClick={clearPayment}>Cancelar edición</button>}</div></form>
         <p><small>Los abonos se aplican a las cuotas más antiguas primero. Puedes registrar pagos parciales o adelantados.</small></p>
-        <Table headers={['Fecha','Cliente','Préstamo','Abono','Saldo tras el abono','Acciones']} rows={payments.map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount),money(row.balance),<div className="buttons" key={row.order}><button onClick={()=>editPayment(row)}>Editar</button><button className="danger-soft" onClick={()=>deletePayment(row)}>Eliminar</button></div>])} emptyText="Todavía no hay abonos registrados."/>
+        <Table headers={['Fecha','Cliente','Préstamo','Abono','Saldo tras el abono','Recibo Yape','Acciones']} rows={payments.map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount),money(row.balance),row.payment.voucherReference||'—',<div className="buttons" key={row.order}><button onClick={()=>editPayment(row)}>Editar</button><button className="danger-soft" onClick={()=>deletePayment(row)}>Eliminar</button></div>])} emptyText="Todavía no hay abonos registrados."/>
       </section>}
       {route==='calendario'&&<section><h2>Calendario de cuotas</h2><label>Mostrar<select value={scheduleFilter} onChange={event=>setScheduleFilter(event.target.value)}><option value="today">Vencen hoy</option><option value="pending">Pendientes</option><option value="all">Todas</option></select></label>
         <Table headers={['Vencimiento','Cliente','Préstamo','Cuota','Pendiente','Estado','WhatsApp']} rows={schedule.filter(item=>scheduleFilter==='all'||(item.left>0&&(scheduleFilter==='today'?item.date===current:item.date>current))).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.amount),money(item.left),!item.left?'Pagada':item.date<current?'Vencida':item.date===current?'Vence hoy':'Pendiente',<WhatsAppButton key={`${item.loan.id}-${item.index}`} item={item} data={data}/>])} emptyText="No hay cuotas para mostrar."/>
       </section>}
-      {route==='comprobantes'&&<section><h2>Capturas de Yape</h2><p>Comprueba la operación en Yape antes de registrar el abono.</p>
+      {route==='comprobantes'&&<section><h2>Capturas de Yape</h2><p>La IA lee los datos del voucher. Confirma el ingreso en Movimientos de Yape antes de registrar el abono.</p>
         <Table headers={['Fecha','Cliente','Préstamo','Monto declarado','Estado','Captura','Acciones']}
           rows={proofs.map(proof=>{
             const friend=friends.find(item=>item.dni===proof.dni);
@@ -417,7 +467,7 @@ export default function App() {
             return [proof.creado,friend?.person??proof.dni,loan?loanLabel(loan,loans.indexOf(loan)):proof.prestamo_id,
               money(Number(proof.monto_centimos)),proof.estado,
               <a key={proof.id} href={`clientes-admin.php?action=image&id=${encodeURIComponent(proof.id)}`} target="_blank" rel="noopener noreferrer">Ver captura</a>,
-              proof.estado==='pendiente'?<div className="buttons" key={proof.id}><button onClick={()=>reviewProof(proof,'verificado')}>Verificar</button><button className="danger-soft" onClick={()=>reviewProof(proof,'rechazado')}>Rechazar</button></div>:'—'];
+              proof.estado==='pendiente'?<div className="buttons" key={proof.id}><button disabled={analyzingProofId===Number(proof.id)||saving} onClick={()=>analyzeProof(proof)}>{analyzingProofId===Number(proof.id)?'Analizando…':'Analizar voucher'}</button><button className="secondary" disabled={saving} onClick={()=>openProofConfirm(proof)}>Registrar manualmente</button><button className="danger-soft" disabled={saving} onClick={()=>reviewProof(proof,'rechazado')}>Rechazar</button></div>:'—'];
           })} emptyText="Todavía no hay capturas recibidas."/>
       </section>}
       {route==='morosidad'&&<section><h2>Morosidad</h2><p>Saldo vencido <strong>{money(sum(overdue,item=>item.left))}</strong></p><Table headers={['Cliente','Cuotas vencidas','Vencimiento más antiguo','Saldo vencido']} rows={[...overdue.reduce((groups,item)=>{const group=groups.get(item.loan.person)??{count:0,total:0,first:item.date};group.count++;group.total+=item.left;groups.set(item.loan.person,group);return groups;},new Map())].map(([person,group])=>[person,group.count,dateFormat(group.first),money(group.total)])} emptyText="No hay cuotas vencidas."/></section>}
@@ -430,6 +480,31 @@ export default function App() {
       {route==='respaldo'&&<section><h2>Respaldo</h2><p>Los datos se guardan en la base de datos del hosting. Puedes descargar una copia de respaldo.</p><button onClick={()=>download(`prestamos-${current}.json`,JSON.stringify(data,null,2),'application/json')}>Descargar copia</button><label>Restaurar una copia<input type="file" accept=".json,application/json" onChange={event=>{restore(event.target.files[0]);event.target.value='';}}/></label></section>}
       </>}
     </main>
+    {proofConfirm&&<div className="modal-backdrop" onClick={()=>!saving&&setProofConfirm(null)}>
+      <div className="modal wide voucher-modal" role="dialog" aria-modal="true" aria-labelledby="voucher-title" onClick={event=>event.stopPropagation()}>
+        <div className="section-head"><h2 id="voucher-title">Revisar pago de Yape</h2><button type="button" className="secondary" disabled={saving} onClick={()=>setProofConfirm(null)}>Cerrar</button></div>
+        <p>Cliente: <strong>{proofClient?.person??proofConfirm.proof.dni}</strong> · Monto declarado: <strong>{money(Number(proofConfirm.proof.monto_centimos))}</strong></p>
+        <div className="voucher-grid">
+          <div><img className="voucher-image" src={'clientes-admin.php?action=image&id='+encodeURIComponent(proofConfirm.id)} alt="Captura enviada por el cliente"/></div>
+          <div>
+            {proofConfirm.analysis&&<div className="voucher-analysis">
+              <strong>Lectura de la IA</strong>
+              <p>{proofConfirm.analysis.is_yape?'Parece una constancia de Yape.':'La imagen no se reconoce claramente como constancia de Yape.'}</p>
+              <dl><dt>Monto</dt><dd>{proofConfirm.analysis.amount??'No legible'}</dd><dt>Enviado por</dt><dd>{proofConfirm.analysis.sender??'No legible'}</dd><dt>Recibido por</dt><dd>{proofConfirm.analysis.recipient??'No legible'}</dd><dt>Fecha y hora</dt><dd>{[proofConfirm.analysis.date,proofConfirm.analysis.time].filter(Boolean).join(' · ')||'No legible'}</dd><dt>Código o recibo</dt><dd>{proofConfirm.analysis.receipt??'No legible'}</dd></dl>
+              {proofConfirm.analysis.amount&&cents(proofConfirm.analysis.amount)!==Number(proofConfirm.proof.monto_centimos)&&<p className="voucher-warning">El monto leído no coincide con el declarado por el cliente.</p>}
+              {proofConfirm.analysis.sender&&proofClient?.person&&normalize(proofClient.person.split(' ')[0]).length>=3&&!normalize(proofConfirm.analysis.sender).includes(normalize(proofClient.person.split(' ')[0]))&&<p className="voucher-warning">El nombre leído no coincide con el cliente. Confirma si pagó otra persona.</p>}
+              {!proofConfirm.analysis.receipt&&<p className="voucher-warning">No se leyó un código de operación. Revísalo en Yape antes de confirmar.</p>}
+            </div>}
+            <label>Monto que ingresó a Yape (S/)<input type="number" min=".01" max="100000000" step=".01" value={proofConfirm.amount} onChange={event=>setProofConfirm(form=>({...form,amount:event.target.value}))}/></label>
+            <label>Fecha del ingreso<input type="date" min="1900-01-01" max={current} value={proofConfirm.date} onChange={event=>setProofConfirm(form=>({...form,date:event.target.value}))}/></label>
+            <label>Código o número de operación<input maxLength={80} value={proofConfirm.receipt} onChange={event=>setProofConfirm(form=>({...form,receipt:event.target.value}))}/></label>
+            <label>Nombre que envió<input maxLength={160} value={proofConfirm.sender} onChange={event=>setProofConfirm(form=>({...form,sender:event.target.value}))}/></label>
+            <label className="voucher-confirm"><input type="checkbox" checked={proofConfirm.checked} onChange={event=>setProofConfirm(form=>({...form,checked:event.target.checked}))}/><span>Confirmo que vi este ingreso en los Movimientos de mi cuenta Yape y revisé el monto.</span></label>
+            <button type="button" disabled={saving||!proofConfirm.checked} onClick={confirmProofPayment}>{saving?'Registrando…':'Confirmar ingreso y registrar abono'}</button>
+          </div>
+        </div>
+      </div>
+    </div>}
     {savedClientAccess&&<div className="modal-backdrop" onClick={()=>setSavedClientAccess(null)}>
       <div className="modal credential-modal" role="dialog" aria-modal="true" aria-labelledby="saved-access-title" onClick={event=>event.stopPropagation()}>
         <div className="section-head"><h2 id="saved-access-title">Clave de {savedClientAccess.person}</h2><button type="button" className="secondary" onClick={()=>setSavedClientAccess(null)}>Cerrar</button></div>
