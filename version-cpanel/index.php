@@ -54,7 +54,7 @@ if (!$auth) {
 <!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mis préstamos</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f1f6f7;color:#172a39;font:16px system-ui}main{box-sizing:border-box;width:min(92%,420px);padding:28px;background:white;border-radius:16px}input,button{box-sizing:border-box;display:block;width:100%;margin-top:10px;padding:12px;font:inherit;border:1px solid #b7c9cc;border-radius:8px}button{background:#08715f;color:white}.whatsapp-link{position:relative;display:inline-block;width:40px;height:40px;padding:0;border:0;border-radius:10px;background:#00b985;color:#fff;cursor:pointer;vertical-align:middle;box-shadow:0 2px 5px #122b2633}.whatsapp-link::before{content:"";position:absolute;left:10px;top:9px;width:18px;height:17px;border:2px solid #fff;border-radius:50%}.whatsapp-link::after{content:"";position:absolute;left:10px;bottom:8px;width:6px;height:6px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:skew(-18deg) rotate(-12deg)}.whatsapp-link:hover{background:#009f73}.whatsapp-link:disabled{opacity:.5;cursor:default}#cashMovementsDialog{width:min(700px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:24px;color:var(--ink);background:var(--paper)}#cashMovementsDialog::backdrop{background:#142c3690}.cash-dialog-header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.cash-dialog-header h2{margin:0}.cash-history-button{margin-left:12px;background:#e6eff0;color:var(--ink)}#clientLoans{width:min(860px,calc(100% - 24px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:16px;padding:clamp(14px,3vw,28px);color:var(--ink);background:var(--bg)}#clientLoans::backdrop{background:#142c3690}#clientLoans h3{margin:0}#clientLoans article{margin-bottom:10px}#clientSearch{max-width:420px;margin:0 0 12px}.client-loans-cell{white-space:nowrap;padding-right:20px}.client-actions{white-space:nowrap}.client-actions button{margin:2px}.client-actions button:last-child{background:#fff0ee;color:#932e29}#friend{padding:12px 0 18px}#cancelClient{background:#e6eff0;color:var(--ink)}
 </style>
-<main><h1>Mis préstamos</h1><form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>"><label>Usuario<input name="login_user" autocomplete="username" required></label><label>Contraseña<input type="password" name="login_password" autocomplete="current-password" required></label><button>Ingresar</button></form><?php if ($post): ?><p role="alert">Comprueba tu usuario y contraseña.</p><?php endif; ?></main></html>
+<main><h1>Mis préstamos</h1><form method="post"><input type="hidden" name="token" value="<?= htmlspecialchars($token, ENT_QUOTES) ?>"><label>Usuario<input name="login_user" autocomplete="username" required></label><label>Contraseña<input type="password" name="login_password" autocomplete="current-password" required></label><button>Ingresar</button></form><p><a href="cliente.php">Acceso de clientes</a></p><?php if ($post): ?><p role="alert">Comprueba tu usuario y contraseña.</p><?php endif; ?></main></html>
     <?php
     exit;
 }
@@ -83,6 +83,19 @@ try {
         }
         $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
             ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
+        $currentClients = [];
+        foreach ($request->data->friends as $friend) {
+            if (is_string($friend->dni ?? null) && preg_match('/^\d{8}$/D', $friend->dni)
+                && is_string($friend->person ?? null)) {
+                $currentClients[$friend->dni] = $friend->person;
+            }
+        }
+        $revoke = $db->prepare('DELETE FROM cliente_accesos WHERE dni=?');
+        foreach ($db->query('SELECT dni, nombre_cliente FROM cliente_accesos') as $access) {
+            if (($currentClients[$access['dni']] ?? null) !== $access['nombre_cliente']) {
+                $revoke->execute([$access['dni']]);
+            }
+        }
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
             $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
             $oldLoans = [];
@@ -198,3 +211,4 @@ $styles = array_map(static fn ($file) => 'react-dist/'.$file, $entry['css'] ?? [
 <script type="module" src="<?= htmlspecialchars($script, ENT_QUOTES) ?>"></script>
 </body>
 </html>
+

@@ -24,3 +24,25 @@ CREATE TABLE IF NOT EXISTS whatsapp_outbox (
   INDEX pending_jobs (status, next_attempt_at, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS cliente_accesos (
+  dni CHAR(8) PRIMARY KEY,
+  nombre_cliente VARCHAR(100) NOT NULL,
+  clave_hash VARCHAR(255) NOT NULL,
+  creado DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS comprobantes_yape (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  dni CHAR(8) NOT NULL,
+  prestamo_id VARCHAR(191) NOT NULL,
+  monto_centimos BIGINT UNSIGNED NOT NULL,
+  imagen LONGBLOB NOT NULL,
+  imagen_tipo VARCHAR(20) NOT NULL,
+  estado VARCHAR(16) NOT NULL DEFAULT 'pendiente',
+  creado DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  revisado DATETIME NULL,
+  INDEX por_estado (estado, creado),
+  INDEX por_cliente (dni, creado)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+

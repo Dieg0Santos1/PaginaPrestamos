@@ -17,15 +17,17 @@ Abre la dirección que muestra Vite, normalmente `http://127.0.0.1:5173/`. Esta 
 
 1. En `PaginaPrestamos/react-app`, ejecuta `npm.cmd run build`. Esto genera `../version-cpanel/react-dist/manifest.json` y los archivos de `react-dist/assets/`. La compilación elimina el HTML de Vite para que la entrada pública siga siendo `index.php`.
 2. En cPanel, comprueba que el subdominio `prestamos.dadtvplay.com` tiene raíz propia en `public_html/prestamos` y HTTPS activo.
-3. En esa raíz, reemplaza `index.php` y sube la carpeta **`react-dist` completa**. La estructura debe ser:
+3. En esa raíz, reemplaza `index.php` y sube `cliente.php`, `clientes-admin.php` y la carpeta **`react-dist` completa**. La estructura debe ser:
 
-   También puedes subir `../prestamos-react-cpanel.zip` a esa raíz y extraerlo allí; contiene exactamente esos archivos.
+   También puedes subir `../prestamos-react-clientes-cpanel.zip` a esa raíz y extraerlo allí; contiene exactamente esos archivos.
 
    ```text
    /home/usuario/
    ├── prestamos-config.php
    └── public_html/prestamos/
        ├── index.php
+       ├── cliente.php
+       ├── clientes-admin.php
        └── react-dist/
            ├── manifest.json
            └── assets/
@@ -37,7 +39,17 @@ Abre la dirección que muestra Vite, normalmente `http://127.0.0.1:5173/`. Esta 
 5. Si todavía no existe la tabla, importa `base.sql` en la base mediante phpMyAdmin. El usuario MySQL necesita `SELECT`, `UPDATE` e `INSERT` para el funcionamiento normal con avisos automáticos.
 6. Abre `https://prestamos.dadtvplay.com/`, inicia sesión y recarga con Ctrl + F5. Los registros que ya están en MySQL se muestran sin volver a importar el respaldo.
 
-Al actualizar la interfaz, repite la compilación y reemplaza `index.php` y `react-dist`. No importes de nuevo un respaldo a menos que quieras reemplazar el registro compartido. El código fuente `react-app`, `node_modules` y el JSON de respaldo no se suben a la carpeta pública.
+Al actualizar la interfaz, repite la compilación y reemplaza `index.php`, `cliente.php`, `clientes-admin.php` y `react-dist`. No importes de nuevo un respaldo a menos que quieras reemplazar el registro compartido. El código fuente `react-app`, `node_modules` y el JSON de respaldo no se suben a la carpeta pública.
+
+## Portal de clientes y capturas de Yape
+
+1. Importa de nuevo `base.sql` en phpMyAdmin. Crea las tablas `cliente_accesos` y `comprobantes_yape` sin reemplazar el registro de préstamos. El usuario de MySQL necesita `SELECT`, `INSERT` y `UPDATE` sobre estas tablas.
+2. Sube `cliente.php` y `clientes-admin.php` junto a `index.php` en la raíz del subdominio. La carpeta `react-dist` debe contener la compilación nueva. Los comprobantes se almacenan en MySQL, no en una carpeta pública.
+3. En el panel, registra un DNI distinto de ocho dígitos por cliente. En **Clientes → Crear acceso**, genera una clave individual. Cópiala y entrégala directamente al cliente. Al generar otra clave para el mismo DNI, la anterior deja de funcionar.
+4. El cliente entra a `https://prestamos.dadtvplay.com/cliente.php` con su DNI y su clave. Puede ver únicamente los préstamos vinculados a su ficha y enviar una captura JPG, PNG o WebP de hasta 4 MB, indicando el préstamo y el monto enviado.
+5. En **Comprobantes**, abre la captura y comprueba la operación en Yape. Después marca el comprobante como verificado o rechazado. El estado verificado confirma la revisión de la captura. Registra el abono en **Pagos** cuando hayas comprobado el ingreso de dinero.
+
+No publiques un respaldo JSON de clientes ni guardes las claves de acceso en el repositorio. La clave de un cliente se muestra al administrador una sola vez. La página local de Vite no tiene acceso al portal PHP, por lo que estas funciones se prueban en cPanel o en un servidor PHP con MySQL.
 
 ## Activar avisos automáticos por WhatsApp
 
@@ -73,3 +85,4 @@ Para aplicar el cambio una sola vez:
 ```
 
 El script crea antes un respaldo privado `prestamos-antes-autorizacion-*.json`, actualiza el registro y aumenta su revisión para que las pestañas abiertas pidan recargar antes de guardar. No envía de nuevo avisos de creación de préstamos antiguos. Recarga la página después. Si algunos clientes no dieron permiso, márcalos individualmente desde **Clientes → Editar** en vez de ejecutar el cambio en bloque.
+

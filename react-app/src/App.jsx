@@ -3,7 +3,7 @@ import {cash, cents, dateFormat, download, due, installmentWithInterest, install
 
 const empty = {loans:[], friends:[]};
 const key = 'mis-prestamos-v1';
-const routes = [['panel','Panel principal'],['clientes','Clientes'],['nuevo','Préstamos'],['calendario','Calendario'],['pagos','Pagos'],['morosidad','Morosidad'],['reportes','Reportes'],['respaldo','Respaldo']];
+const routes = [['panel','Panel principal'],['clientes','Clientes'],['nuevo','Préstamos'],['calendario','Calendario'],['pagos','Pagos'],['comprobantes','Comprobantes'],['morosidad','Morosidad'],['reportes','Reportes'],['respaldo','Respaldo']];
 const frequencyNames = {week:'Semanal',fortnight:'Quincenal',month:'Mensual'};
 const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es');
 const firstDue = (issued,frequency) => validDate(issued) ? due(issued,frequency,1) : '';
@@ -103,6 +103,8 @@ export default function App() {
   const [paymentText,setPaymentText] = useState('');
   const [editingPayment,setEditingPayment] = useState(null);
   const [scheduleFilter,setScheduleFilter] = useState('today');
+  const [proofs,setProofs] = useState([]);
+  const [clientAccess,setClientAccess] = useState(null);
 
   useEffect(() => { const change = () => setRoute(location.hash.slice(1) || 'panel'); window.addEventListener('hashchange',change); return () => window.removeEventListener('hashchange',change); }, []);
   useEffect(() => {
@@ -120,10 +122,41 @@ export default function App() {
     return ()=>{document.body.style.overflow=previous;window.removeEventListener('keydown',escape);};
   },[isMobile,menuOpen]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  useEffect(() => {
+    if (!server || route!=='comprobantes') return;
+    fetch('clientes-admin.php?action=list')
+      .then(response => { if (!response.ok) throw new Error(); return response.json(); })
+      .then(setProofs)
+      .catch(() => flash('No se pudieron cargar los comprobantes.'));
+  },[route,server]);
   function flash(message) {
     clearTimeout(noticeTimer.current);
     setNotice(message);
     if (message) noticeTimer.current = setTimeout(() => setNotice(''),5000);
+  }
+  async function createClientAccess(friend) {
+    if (!server || !/^\d{8}$/.test(friend.dni)) return flash('El cliente necesita un DNI de 8 dígitos.');
+    if (!confirm(`¿Crear o renovar la clave de ${friend.person}? La clave anterior dejará de funcionar.`)) return;
+    try {
+      const response=await fetch('clientes-admin.php?action=access',{
+        method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},
+        body:JSON.stringify({dni:friend.dni})
+      });
+      const result=await response.json();
+      if (!response.ok) throw new Error(result.error||'No se pudo crear la clave.');
+      setClientAccess({person:friend.person,dni:friend.dni,clave:result.clave});
+    } catch (error) { flash(error.message); }
+  }
+  async function reviewProof(proof,status) {
+    try {
+      const response=await fetch('clientes-admin.php?action=review',{
+        method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},
+        body:JSON.stringify({id:Number(proof.id),estado:status})
+      });
+      if (!response.ok) throw new Error();
+      setProofs(items=>items.map(item=>item.id===proof.id?{...item,estado:status}:item));
+      flash(status==='verificado'?'Comprobante verificado. Registra el abono en Pagos tras comprobar la operación.':'Comprobante rechazado.');
+    } catch { flash('No se pudo actualizar el comprobante. Actualiza la página.'); }
   }
   async function commit(next, message, restore=false) {
     if ((!data && !restore) || busy.current) { flash('Hay un guardado en curso o el registro no está disponible.'); return false; }
@@ -301,7 +334,7 @@ export default function App() {
       {route==='clientes'&&<section><div className="section-head"><h2>Registro de clientes</h2><div className="buttons">{friends.some(friend=>!friend.whatsappConsent)&&<button type="button" className="secondary" disabled={saving} onClick={authorizeAllClients}>Autorizar avisos a todos</button>}<button onClick={()=>setClientForm({previous:null,person:'',dni:'',phone:'',address:'',whatsappConsent:false})}>Nuevo cliente</button></div></div>
         {clientForm&&<form className="client-form" onSubmit={saveClient}><h3>{clientForm.previous===null?'Nuevo cliente':'Editar cliente'}</h3><div className="form-grid">{[['person','Nombre completo'],['dni','DNI (opcional)'],['phone','Teléfono'],['address','Dirección de referencia']].map(([field,label])=><label key={field}>{label}<input type={field==='phone'?'tel':'text'} inputMode={field==='dni'?'numeric':undefined} value={clientForm[field]} required={field==='person'} maxLength={field==='person'?100:field==='dni'?8:field==='phone'?30:200} onChange={event=>setClientForm(form=>({...form,[field]:event.target.value}))}/></label>)}</div><label className="consent-line"><input type="checkbox" checked={Boolean(clientForm.whatsappConsent)} onChange={event=>setClientForm(form=>({...form,whatsappConsent:event.target.checked}))}/><span>El cliente autorizó recibir avisos de préstamos y vencimientos por WhatsApp</span></label><div className="buttons"><button disabled={saving}>Guardar cliente</button><button type="button" className="secondary" onClick={()=>setClientForm(null)}>Cancelar</button></div></form>}
         <label>Buscar clientes<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} placeholder="Nombre, DNI o teléfono"/></label>
-        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>setClientForm({...friend,previous:friend.person})}>Editar</button><button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button><button type="button" className="wa-button" title={whatsappNumber(friend.phone)?'Enviar información de préstamos por WhatsApp':'Agrega el teléfono del cliente'} aria-label={`WhatsApp para ${friend.person}`} disabled={!whatsappNumber(friend.phone)} onClick={()=>window.open(`https://wa.me/${whatsappNumber(friend.phone)}?text=${encodeURIComponent(clientLoansMessage(friend,loans,schedule,current))}`,'_blank','noopener,noreferrer')}/></div>])} emptyText="Todavía no hay clientes registrados."/>
+        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>setClientForm({...friend,previous:friend.person})}>Editar</button>{server&&<button type="button" disabled={!/^\d{8}$/.test(friend.dni)} onClick={()=>createClientAccess(friend)}>Crear acceso</button>}<button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button><button type="button" className="wa-button" title={whatsappNumber(friend.phone)?'Enviar información de préstamos por WhatsApp':'Agrega el teléfono del cliente'} aria-label={`WhatsApp para ${friend.person}`} disabled={!whatsappNumber(friend.phone)} onClick={()=>window.open(`https://wa.me/${whatsappNumber(friend.phone)}?text=${encodeURIComponent(clientLoansMessage(friend,loans,schedule,current))}`,'_blank','noopener,noreferrer')}/></div>])} emptyText="Todavía no hay clientes registrados."/>
       </section>}
       {route==='nuevo'&&<section><h2>{editingLoan?'Editar préstamo':'Registrar préstamo'}</h2><form onSubmit={saveLoan}>
         <label>Persona<select value={loanForm.person} disabled={Boolean(editingLoan)} required onChange={event=>changeLoan('person',event.target.value)}><option value="">Selecciona un cliente</option>{friends.map(friend=><option key={friend.person}>{friend.person}</option>)}</select></label>
@@ -325,6 +358,17 @@ export default function App() {
       {route==='calendario'&&<section><h2>Calendario de cuotas</h2><label>Mostrar<select value={scheduleFilter} onChange={event=>setScheduleFilter(event.target.value)}><option value="today">Vencen hoy</option><option value="pending">Pendientes</option><option value="all">Todas</option></select></label>
         <Table headers={['Vencimiento','Cliente','Préstamo','Cuota','Pendiente','Estado','WhatsApp']} rows={schedule.filter(item=>scheduleFilter==='all'||(item.left>0&&(scheduleFilter==='today'?item.date===current:item.date>current))).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.amount),money(item.left),!item.left?'Pagada':item.date<current?'Vencida':item.date===current?'Vence hoy':'Pendiente',<WhatsAppButton key={`${item.loan.id}-${item.index}`} item={item} data={data}/>])} emptyText="No hay cuotas para mostrar."/>
       </section>}
+      {route==='comprobantes'&&<section><h2>Capturas de Yape</h2><p>Comprueba la operación en Yape antes de registrar el abono.</p>
+        <Table headers={['Fecha','Cliente','Préstamo','Monto declarado','Estado','Captura','Acciones']}
+          rows={proofs.map(proof=>{
+            const friend=friends.find(item=>item.dni===proof.dni);
+            const loan=loans.find(item=>item.id===proof.prestamo_id);
+            return [proof.creado,friend?.person??proof.dni,loan?loanLabel(loan,loans.indexOf(loan)):proof.prestamo_id,
+              money(Number(proof.monto_centimos)),proof.estado,
+              <a key={proof.id} href={`clientes-admin.php?action=image&id=${encodeURIComponent(proof.id)}`} target="_blank" rel="noopener noreferrer">Ver captura</a>,
+              proof.estado==='pendiente'?<div className="buttons" key={proof.id}><button onClick={()=>reviewProof(proof,'verificado')}>Verificar</button><button className="danger-soft" onClick={()=>reviewProof(proof,'rechazado')}>Rechazar</button></div>:'—'];
+          })} emptyText="Todavía no hay capturas recibidas."/>
+      </section>}
       {route==='morosidad'&&<section><h2>Morosidad</h2><p>Saldo vencido <strong>{money(sum(overdue,item=>item.left))}</strong></p><Table headers={['Cliente','Cuotas vencidas','Vencimiento más antiguo','Saldo vencido']} rows={[...overdue.reduce((groups,item)=>{const group=groups.get(item.loan.person)??{count:0,total:0,first:item.date};group.count++;group.total+=item.left;groups.set(item.loan.person,group);return groups;},new Map())].map(([person,group])=>[person,group.count,dateFormat(group.first),money(group.total)])} emptyText="No hay cuotas vencidas."/></section>}
       {route==='reportes'&&<section className="loan-list" aria-label="Detalle de préstamos">
         <div className="report-actions"><button type="button" onClick={()=>download(`reporte-prestamos-${current}.csv`,reportCsv(reportRows(loans,current)),'text/csv;charset=utf-8')}>Descargar reporte para Excel</button></div>
@@ -335,7 +379,15 @@ export default function App() {
       {route==='respaldo'&&<section><h2>Respaldo</h2><p>Los datos se guardan en la base de datos del hosting. Puedes descargar una copia de respaldo.</p><button onClick={()=>download(`prestamos-${current}.json`,JSON.stringify(data,null,2),'application/json')}>Descargar copia</button><label>Restaurar una copia<input type="file" accept=".json,application/json" onChange={event=>{restore(event.target.files[0]);event.target.value='';}}/></label></section>}
       </>}
     </main>
+    {clientAccess&&<div className="modal-backdrop" onClick={()=>setClientAccess(null)}><div className="modal" onClick={event=>event.stopPropagation()}>
+      <div className="section-head"><h2>Acceso de {clientAccess.person}</h2><button onClick={()=>setClientAccess(null)}>Cerrar</button></div>
+      <p>Comparte estos datos con el cliente. La clave se muestra una sola vez.</p>
+      <p>Portal: <a href="cliente.php" target="_blank" rel="noopener noreferrer">{location.origin+location.pathname.replace(/[^/]*$/,'')+'cliente.php'}</a></p>
+      <p>DNI: <strong>{clientAccess.dni}</strong></p><p>Clave: <strong>{clientAccess.clave}</strong></p>
+      <button type="button" onClick={()=>navigator.clipboard.writeText(`DNI: ${clientAccess.dni}\nClave: ${clientAccess.clave}\nPortal: ${location.origin+location.pathname.replace(/[^/]*$/,'')}cliente.php`)}>Copiar acceso</button>
+    </div></div>}
     {cashHistory&&<div className="modal-backdrop" onClick={()=>setCashHistory(false)}><div className="modal" onClick={event=>event.stopPropagation()}><div className="section-head"><h2>Movimientos de caja</h2><button onClick={()=>setCashHistory(false)}>Cerrar</button></div><Table headers={['Fecha','Movimiento','Monto','Descripción']} rows={[...(data?.cashMovements??[])].reverse().map(movement=>[dateFormat(movement.date),movement.type==='income'?'Ingreso':'Egreso',`${movement.type==='income'?'+':'-'}${money(movement.amount)}`,movement.description?.trim()||'—'])} emptyText="No hay movimientos de caja."/></div></div>}
     {managedClient&&<div className="modal-backdrop" onClick={()=>setManagedClient(null)}><div className="modal wide" onClick={event=>event.stopPropagation()}><div className="section-head"><h2>{managedClient}</h2><button onClick={()=>setManagedClient(null)}>Cerrar</button></div><button onClick={()=>{resetLoan();setLoanForm(form=>({...form,person:managedClient}));setManagedClient(null);location.hash='nuevo';}}>Nuevo préstamo</button><p>Saldo pendiente: {money(sum(loans.filter(loan=>loan.person===managedClient),remaining))}</p>{loans.filter(loan=>loan.person===managedClient).map(loan=><article key={loan.id}><h3>{loan.person} · {frequencyNames[loan.frequency]}</h3><p>Saldo pendiente: {money(remaining(loan))} · Cuota: {money(loan.amount)}</p><div className="buttons"><button onClick={()=>openLoan(loan)}>Editar préstamo</button><button className="danger-soft" disabled={loan.payments.length>0} onClick={()=>deleteLoan(loan)}>Eliminar préstamo</button>{remaining(loan)>0&&<button onClick={()=>{const option=payable.find(item=>item.loan.id===loan.id);setPaymentText(option?.label??'');setPaymentForm({loanId:loan.id,amount:'',date:current});setManagedClient(null);location.hash='pagos';}}>Registrar abono</button>}</div><Table headers={['Vence','Cuota','Pendiente']} rows={schedule.filter(item=>item.loan.id===loan.id).map(item=>[dateFormat(item.date),money(item.amount),money(item.left)])} emptyText="Sin cuotas"/></article>)}{!loans.some(loan=>loan.person===managedClient)&&<p>Este cliente no tiene préstamos registrados.</p>}</div></div>}
   </div>;
 }
+
