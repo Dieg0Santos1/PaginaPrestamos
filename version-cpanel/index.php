@@ -83,19 +83,6 @@ try {
         }
         $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
             ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
-        $currentClients = [];
-        foreach ($request->data->friends as $friend) {
-            if (is_string($friend->dni ?? null) && preg_match('/^\d{8}$/D', $friend->dni)
-                && is_string($friend->person ?? null)) {
-                $currentClients[$friend->dni] = $friend->person;
-            }
-        }
-        $revoke = $db->prepare('DELETE FROM cliente_accesos WHERE dni=?');
-        foreach ($db->query('SELECT dni, nombre_cliente FROM cliente_accesos') as $access) {
-            if (($currentClients[$access['dni']] ?? null) !== $access['nombre_cliente']) {
-                $revoke->execute([$access['dni']]);
-            }
-        }
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
             $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
             $oldLoans = [];
@@ -171,6 +158,23 @@ try {
             }
         }
         $db->commit();
+        try {
+            $currentClients = [];
+            foreach ($request->data->friends as $friend) {
+                if (is_string($friend->dni ?? null) && preg_match('/^\d{8}$/D', $friend->dni)
+                    && is_string($friend->person ?? null)) {
+                    $currentClients[$friend->dni] = $friend->person;
+                }
+            }
+            $revoke = $db->prepare('DELETE FROM cliente_accesos WHERE dni=?');
+            foreach ($db->query('SELECT dni, nombre_cliente FROM cliente_accesos') as $access) {
+                if (($currentClients[$access['dni']] ?? null) !== $access['nombre_cliente']) {
+                    $revoke->execute([$access['dni']]);
+                }
+            }
+        } catch (PDOException $error) {
+            error_log('Mis préstamos: no se pudo sincronizar el acceso de clientes.');
+        }
         header('Content-Type: application/json');
         echo json_encode(['revision'=>$request->revision+1]);
         exit;
