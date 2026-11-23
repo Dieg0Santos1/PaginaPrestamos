@@ -45,6 +45,19 @@ function WhatsAppButton({item,data}) {
     onClick={() => window.open(`https://wa.me/${number}?text=${encodeURIComponent(message)}`,'_blank','noopener,noreferrer')} />;
 }
 
+function clientLoansMessage(friend,loans,schedule,current) {
+  const active=loans.map((loan,index)=>({loan,index})).filter(({loan})=>loan.person===friend.person&&remaining(loan)>0);
+  const lines=[`Hola ${friend.person}, te comparto el estado de tus préstamos al ${dateFormat(current)}.`];
+  if (!active.length) lines.push('No tienes préstamos con saldo pendiente.');
+  for (const {loan,index} of active) {
+    const next=schedule.find(item=>item.loan.id===loan.id&&item.left>0);
+    lines.push(`Préstamo N.º ${index+1} (${frequencyNames[loan.frequency]}): saldo pendiente ${money(remaining(loan))}.`);
+    if (next) lines.push(`Cuota pendiente con vencimiento ${dateFormat(next.date)}: ${money(next.left)}.`);
+  }
+  lines.push('',`Saldo total pendiente: ${money(sum(active,({loan})=>remaining(loan)))}.`);
+  return lines.join('\n');
+}
+
 export default function App() {
   const server = window.__PRESTAMOS_BOOTSTRAP__;
   const [data,setData] = useState(initialData);
@@ -268,7 +281,7 @@ export default function App() {
       {route==='clientes'&&<section><div className="section-head"><h2>Registro de clientes</h2><div className="buttons">{friends.some(friend=>!friend.whatsappConsent)&&<button type="button" className="secondary" disabled={saving} onClick={authorizeAllClients}>Autorizar avisos a todos</button>}<button onClick={()=>setClientForm({previous:null,person:'',dni:'',phone:'',address:'',whatsappConsent:false})}>Nuevo cliente</button></div></div>
         {clientForm&&<form className="client-form" onSubmit={saveClient}><h3>{clientForm.previous===null?'Nuevo cliente':'Editar cliente'}</h3><div className="form-grid">{[['person','Nombre completo'],['dni','DNI (opcional)'],['phone','Teléfono'],['address','Dirección de referencia']].map(([field,label])=><label key={field}>{label}<input type={field==='phone'?'tel':'text'} inputMode={field==='dni'?'numeric':undefined} value={clientForm[field]} required={field==='person'} maxLength={field==='person'?100:field==='dni'?8:field==='phone'?30:200} onChange={event=>setClientForm(form=>({...form,[field]:event.target.value}))}/></label>)}</div><label className="consent-line"><input type="checkbox" checked={Boolean(clientForm.whatsappConsent)} onChange={event=>setClientForm(form=>({...form,whatsappConsent:event.target.checked}))}/><span>El cliente autorizó recibir avisos de préstamos y vencimientos por WhatsApp</span></label><div className="buttons"><button disabled={saving}>Guardar cliente</button><button type="button" className="secondary" onClick={()=>setClientForm(null)}>Cancelar</button></div></form>}
         <label>Buscar clientes<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} placeholder="Nombre, DNI o teléfono"/></label>
-        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>setClientForm({...friend,previous:friend.person})}>Editar</button><button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button></div>])} emptyText="Todavía no hay clientes registrados."/>
+        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>setClientForm({...friend,previous:friend.person})}>Editar</button><button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button><button type="button" className="wa-button" title={whatsappNumber(friend.phone)?'Enviar información de préstamos por WhatsApp':'Agrega el teléfono del cliente'} aria-label={`WhatsApp para ${friend.person}`} disabled={!whatsappNumber(friend.phone)} onClick={()=>window.open(`https://wa.me/${whatsappNumber(friend.phone)}?text=${encodeURIComponent(clientLoansMessage(friend,loans,schedule,current))}`,'_blank','noopener,noreferrer')}/></div>])} emptyText="Todavía no hay clientes registrados."/>
       </section>}
       {route==='nuevo'&&<section><h2>{editingLoan?'Editar préstamo':'Registrar préstamo'}</h2><form onSubmit={saveLoan}>
         <label>Persona<select value={loanForm.person} disabled={Boolean(editingLoan)} required onChange={event=>changeLoan('person',event.target.value)}><option value="">Selecciona un cliente</option>{friends.map(friend=><option key={friend.person}>{friend.person}</option>)}</select></label>
