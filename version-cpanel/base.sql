@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS cliente_accesos (
   dni CHAR(8) PRIMARY KEY,
   nombre_cliente VARCHAR(100) NOT NULL,
   clave_hash VARCHAR(255) NOT NULL,
+  clave_cifrada TEXT NULL,
   creado DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -44,5 +45,4 @@ CREATE TABLE IF NOT EXISTS comprobantes_yape (
   INDEX por_estado (estado, creado),
   INDEX por_cliente (dni, creado)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 

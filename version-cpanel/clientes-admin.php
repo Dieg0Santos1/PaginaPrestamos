@@ -52,6 +52,31 @@ try {
         echo json_encode($rows, JSON_THROW_ON_ERROR);
         exit;
     }
+    if ($action === 'access-list' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+        $keyBase64 = $config['client_password_key'] ?? '';
+        $key = is_string($keyBase64) ? base64_decode($keyBase64, true) : false;
+        if (!is_string($key) || strlen($key) !== 32) {
+            http_response_code(503);
+            echo json_encode(['error'=>'Falta configurar client_password_key.']);
+            exit;
+        }
+        $rows = $db->query('SELECT dni, clave_cifrada FROM cliente_accesos')->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $clear = null;
+            if (is_string($row['clave_cifrada']) && $row['clave_cifrada'] !== '') {
+                $raw = base64_decode($row['clave_cifrada'], true);
+                if (!is_string($raw) || strlen($raw) < 29) throw new RuntimeException('Clave cifrada inválida');
+                $opened = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key, OPENSSL_RAW_DATA,
+                    substr($raw, 0, 12), substr($raw, 12, 16));
+                if (!is_string($opened)) throw new RuntimeException('No se pudo descifrar la clave');
+                $clear = $opened;
+            }
+            $result[] = ['dni'=>$row['dni'], 'clave'=>$clear];
+        }
+        echo json_encode($result, JSON_THROW_ON_ERROR);
+        exit;
+    }
     if ($_SERVER['REQUEST_METHOD'] !== 'POST'
         || !hash_equals($token, $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '')) {
         http_response_code(403);
