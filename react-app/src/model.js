@@ -54,7 +54,8 @@ export function valid(snapshot) {
   if (snapshot.monthlyRate != null && !validRate(snapshot.monthlyRate)) return false;
   if (snapshot.cashMovements !== undefined && (!Array.isArray(snapshot.cashMovements)
     || !snapshot.cashMovements.every(m => m && typeof m.id === 'string' && m.id
-      && ['income', 'expense'].includes(m.type) && positive(m.amount) && validDate(m.date))
+      && ['income', 'expense'].includes(m.type) && positive(m.amount) && validDate(m.date)
+      && (m.description === undefined || (typeof m.description === 'string' && m.description.length <= 200)))
     || new Set(snapshot.cashMovements.map(m => m.id)).size !== snapshot.cashMovements.length)) return false;
   if (snapshot.friends !== undefined && (!Array.isArray(snapshot.friends)
     || !snapshot.friends.every(f => f && typeof f.person === 'string' && f.person.trim()

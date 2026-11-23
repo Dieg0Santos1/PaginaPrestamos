@@ -12,11 +12,9 @@
 .menu-backdrop{position:fixed;inset:0;z-index:35;background:#142c3690}
 :where(button,a,input,select):focus-visible{outline:3px solid #f5ad42;outline-offset:2px}
 .buttons button,.section-head button{min-height:40px}
-.cash-entry-row,.rate-entry-row{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
-.cash-entry-row label,.rate-entry-row label{flex:1 1 150px;min-width:0;margin:0}
-.cash-entry-row label{flex-basis:120px}
-.cash-actions{flex:0 0 auto;max-width:100%}
-.rate-entry-row>button{flex:0 0 auto;min-height:44px}
+.cash-entry-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:12px}
+.cash-entry-row label{min-width:0;margin:0}
+.cash-actions{margin-top:12px}
 .consent-line{display:flex;align-items:flex-start;gap:10px;font-weight:500;line-height:1.4}
 .consent-line input{flex:none;width:18px;height:18px;min-height:18px;margin:2px 0 0;accent-color:#087b66}
 .loan-list{padding:0;border:0;background:transparent}
@@ -66,7 +64,7 @@
   .loan-accordion summary strong{white-space:normal}
   .loan-accordion-body{padding:8px 12px 12px}
   .report-actions button{width:100%}
-  .cash-entry-row .cash-actions,.rate-entry-row>button{width:100%}
+  .cash-entry-row{grid-template-columns:1fr}
 }
 @media(max-width:420px){
   .metrics{grid-template-columns:1fr}
