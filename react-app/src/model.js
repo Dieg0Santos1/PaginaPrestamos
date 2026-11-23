@@ -5,11 +5,6 @@ export const dateFormat = value => value.split('-').reverse().join('/');
 export const sum = (items, value) => items.reduce((total, item) => total + value(item), 0);
 export const remaining = loan => loan.amount * loan.count - sum(loan.payments, payment => payment.amount);
 export const totalPaid = loan => sum(loan.payments, payment => payment.amount);
-export const capitalPending = loan => {
-  const capital = loan.type === 'new' ? loan.principal : loan.originalPrincipal;
-  if (capital === undefined) return 0;
-  return Math.max(0, Math.min(capital, loan.amount * loan.count) - totalPaid(loan));
-};
 export const opening = data => (data.initialReceivable ?? 0) - sum(data.loans.filter(loan => loan.type === 'old'), loan => loan.principal);
 export const cash = data => (data.initialCash ?? 0)
   - sum(data.loans.filter(loan => loan.type === 'new'), loan => loan.principal)
