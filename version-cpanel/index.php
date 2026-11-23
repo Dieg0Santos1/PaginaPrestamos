@@ -85,9 +85,9 @@ try {
             ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
             $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
-            $oldIds = [];
+            $oldLoans = [];
             foreach ($oldData->loans ?? [] as $loan) {
-                if (is_string($loan->id ?? null)) $oldIds[$loan->id] = true;
+                if (is_string($loan->id ?? null)) $oldLoans[$loan->id] = $loan;
             }
             $consented = [];
             foreach ($request->data->friends as $friend) {
@@ -101,8 +101,60 @@ try {
                 (message_key, kind, loan_id) VALUES (?, 'created', ?)");
             foreach ($request->data->loans as $loan) {
                 if (!is_string($loan->id ?? null) || !is_string($loan->person ?? null)
-                    || isset($oldIds[$loan->id]) || empty($consented[$loan->person])) continue;
+                    || isset($oldLoans[$loan->id]) || empty($consented[$loan->person])) continue;
                 $enqueue->execute([hash('sha256', 'created:'.$loan->id), $loan->id]);
+            }
+            $cancelPayment = $db->prepare("UPDATE whatsapp_outbox SET status='skipped',
+                last_error='Abono editado o eliminado antes del envío'
+                WHERE message_key=? AND status='pending'");
+            $enqueuePayment = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
+                (message_key, kind, loan_id, message_text) VALUES (?, 'payment', ?, ?)");
+            $money = static fn (int $cents): string => 'S/ '.number_format($cents / 100, 2, '.', ',');
+            foreach ($request->data->loans as $loanIndex=>$loan) {
+                if (!is_string($loan->id ?? null) || !isset($oldLoans[$loan->id])) continue;
+                $oldPayments = $oldLoans[$loan->id]->payments ?? [];
+                $newPayments = $loan->payments ?? [];
+                if (!is_array($oldPayments) || !is_array($newPayments)) continue;
+                $currentPayments = [];
+                foreach ($newPayments as $payment) {
+                    if (is_string($payment->id ?? null)) $currentPayments[$payment->id] = $payment;
+                }
+                foreach ($oldPayments as $payment) {
+                    if (!is_string($payment->id ?? null)) continue;
+                    if (!isset($currentPayments[$payment->id]) || $currentPayments[$payment->id] != $payment) {
+                        $cancelPayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id)]);
+                    }
+                }
+                if (empty($consented[$loan->person ?? '']) || count($newPayments) !== count($oldPayments) + 1) continue;
+                foreach ($oldPayments as $index=>$payment) {
+                    if ($payment != $newPayments[$index]) continue 2;
+                }
+                $payment = $newPayments[count($oldPayments)];
+                if (!is_string($payment->id ?? null)
+                    || !preg_match('/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i', $payment->id)
+                    || !is_int($payment->amount ?? null) || $payment->amount <= 0
+                    || !is_string($payment->date ?? null) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $payment->date)
+                    || !is_int($loan->amount ?? null) || $loan->amount <= 0
+                    || !is_int($loan->count ?? null) || $loan->count < 1 || $loan->count > 120) continue;
+                $paidBefore = 0;
+                foreach ($oldPayments as $oldPayment) $paidBefore += (int) ($oldPayment->amount ?? 0);
+                $paidAfter = $paidBefore + $payment->amount;
+                if ($paidAfter > $loan->amount * $loan->count) continue;
+                $balance = max(0, $loan->amount * $loan->count - $paidAfter);
+                $person = trim(preg_replace('/[\r\n]+/', ' ', (string) $loan->person));
+                $message = 'Hola '.$person.', registramos tu abono de '.$money($payment->amount)
+                    .' del '.date('d/m/Y', strtotime($payment->date))
+                    .' para el préstamo N.º '.($loanIndex + 1).'.';
+                for ($index = 0; $index < $loan->count; $index++) {
+                    $before = max(0, $loan->amount - max(0, $paidBefore - $index * $loan->amount));
+                    $after = max(0, $loan->amount - max(0, $paidAfter - $index * $loan->amount));
+                    if ($after > 0 && $after < $before) {
+                        $message .= "\nSaldo pendiente de la cuota N.º ".($index + 1).': '.$money($after).'.';
+                        break;
+                    }
+                }
+                $message .= "\n\nSaldo pendiente de todo el préstamo: ".$money($balance).'. Gracias.';
+                $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
             }
         }
         $db->commit();

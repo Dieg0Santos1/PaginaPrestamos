@@ -126,6 +126,12 @@ try {
             }
             $message = 'Hola '.$person.', hoy vence tu cuota. Saldo pendiente: '
                 .money($part['left']).'. Gracias.';
+        } elseif ($job['kind'] === 'payment') {
+            $message = trim((string) ($job['message_text'] ?? ''));
+            if ($message === '') {
+                finish($db, (int) $job['id'], 'failed', null, null, 'Comprobante de abono vacío');
+                exit(1);
+            }
         } else {
             finish($db, (int) $job['id'], 'failed', null, null, 'Tipo de aviso inválido');
             exit(1);

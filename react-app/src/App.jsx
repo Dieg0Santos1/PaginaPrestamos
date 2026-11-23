@@ -204,7 +204,7 @@ export default function App() {
     if (amount<=0 || amount>remaining(loan)+(previous?.amount??0)) return flash('El monto debe ser positivo y caber en el saldo disponible para este abono.');
     if (!validDate(date)||date>current) return flash('Ingresa una fecha de recepción válida que no sea futura.');
     if (loan.issued&&date<loan.issued) return flash('La fecha del abono debe ser igual o posterior al desembolso.');
-    const updated=previous?loan.payments.map(payment=>payment===previous?{...payment,amount,date}:payment):[...loan.payments,{amount,date,createdAt:Date.now()}];
+    const updated=previous?loan.payments.map(payment=>payment===previous?{...payment,amount,date}:payment):[...loan.payments,{id:crypto.randomUUID(),amount,date,createdAt:Date.now()}];
     const next={...data,loans:loans.map(item=>item===loan?{...item,payments:updated}:item)};
     if (cash(next)<0) return flash('Si reduces este abono, la caja quedaría en negativo.');
     if (await commit(next,previous?'Abono actualizado.':'Abono registrado.')) {
