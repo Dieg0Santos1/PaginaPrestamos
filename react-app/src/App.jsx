@@ -59,10 +59,6 @@ function clientLoansMessage(friend,loans,schedule,current) {
       while (completed<loan.count&&paid>=loan.amount*(completed+1)) paidDates[completed++]=payment.date;
     }
     lines.push('',`Préstamo N.º ${index+1} (${frequencyNames[loan.frequency]}):`);
-    if (payments.length) {
-      lines.push('Abonos realizados:');
-      for (const payment of payments) lines.push(`- ${dateFormat(payment.date)}: ${money(payment.amount)}.`);
-    }
     if (paidDates.length) {
       lines.push('Cuotas pagadas:');
       for (const part of parts.filter(item=>item.left===0)) {
@@ -79,7 +75,6 @@ function clientLoansMessage(friend,loans,schedule,current) {
     }
     lines.push(`Saldo pendiente del préstamo: ${money(remaining(loan))}.`);
   }
-  lines.push('',`Saldo total pendiente: ${money(sum(own,({loan})=>remaining(loan)))}.`);
   return lines.join('\n');
 }
 
