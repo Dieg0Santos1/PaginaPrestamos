@@ -135,7 +135,15 @@ export default function App() {
     if (!server || route!=='clientes') return;
     fetch('clientes-admin.php?action=access-list')
       .then(response => { if (!response.ok) throw new Error(); return response.json(); })
-      .then(rows => setClientPasswords(Object.fromEntries(rows.map(row=>[row.dni,row.clave]))))
+      .then(rows => {
+        const passwords=Object.fromEntries(rows.map(row=>[row.dni,row.clave]));
+        setClientPasswords(passwords);
+        setClientForm(form=>{
+          if (!form?.previous || form.passwordTouched) return form;
+          const currentPassword=passwords[form.dni];
+          return currentPassword?{...form,password:currentPassword,originalPassword:currentPassword}:form;
+        });
+      })
       .catch(() => {setClientPasswords(null);flash('No se pudieron mostrar las claves. Revisa la migración y la clave privada del servidor.');});
   },[route,server]);
   function flash(message) {
@@ -167,7 +175,11 @@ export default function App() {
           const detail=await response.json().catch(()=>null);
           throw new Error(detail?.error||'No se pudo guardar');
         }
-        revision.current = (await response.json()).revision;
+        const saved=await response.json();
+        revision.current = saved.revision;
+        if (saved.accessSecret && clientAccess) {
+          next={...next,friends:next.friends.map(friend=>friend.person===clientAccess.person?{...friend,accessSecret:saved.accessSecret}:friend)};
+        }
       } else {
         if (localStorage.getItem(key)!==stored.current) {flash('El registro cambió en otra pestaña. Recarga esta página antes de guardar.');return false;}
         stored.current=JSON.stringify(next);
@@ -241,17 +253,19 @@ export default function App() {
   async function saveClient(event) {
     event.preventDefault();
     const previous=clientForm.previous;
-    const contact={person:clientForm.person.trim(),dni:clientForm.dni.trim(),phone:clientForm.phone.trim(),address:clientForm.address.trim(),whatsappConsent:Boolean(clientForm.whatsappConsent)};
     const oldFriend=previous===null?null:friends.find(friend=>friend.person===previous);
     const password=clientForm.password??'';
+    const contact={person:clientForm.person.trim(),dni:clientForm.dni.trim(),phone:clientForm.phone.trim(),address:clientForm.address.trim(),whatsappConsent:Boolean(clientForm.whatsappConsent)};
+    if (oldFriend?.accessSecret && contact.dni===oldFriend.dni) contact.accessSecret=oldFriend.accessSecret;
+    const passwordToSave=password && (password!==(clientForm.originalPassword??'') || contact.dni!==oldFriend?.dni) ? password : '';
     if (!contact.person) return flash('Escribe el nombre del cliente.');
     if (contact.dni && !/^\d{8}$/.test(contact.dni)) return flash('El DNI debe tener 8 dígitos.');
     if (contact.dni && friends.some(friend=>friend.person!==previous&&friend.dni===contact.dni)) return flash('Ese DNI ya pertenece a otro cliente.');
     if (friends.some(friend => friend.person!==previous && normalize(friend.person)===normalize(contact.person))) return flash('Ya existe un cliente con ese nombre.');
     if (password && (!contact.dni || password.length<8 || password.length>72)) return flash('Para crear una contraseña, escribe un DNI de 8 dígitos y una clave de 8 a 72 caracteres.');
-    if (server && contact.dni && (previous===null || contact.dni!==oldFriend?.dni) && !password) return flash('Escribe una contraseña de al menos 8 caracteres para el acceso del cliente.');
+    if (server && contact.dni && (previous===null || contact.dni!==oldFriend?.dni) && !passwordToSave) return flash('Escribe una contraseña de al menos 8 caracteres para el acceso del cliente.');
     const next={...data,friends:previous===null?[...friends,contact]:friends.map(friend=>friend.person===previous?contact:friend),loans:loans.map(loan=>loan.person===previous?{...loan,person:contact.person}:loan)};
-    const access=server?{dni:contact.dni,person:contact.person,previous_dni:oldFriend?.dni??'',previous_person:oldFriend?.person??'',password}:null;
+    const access=server?{dni:contact.dni,person:contact.person,previous_dni:oldFriend?.dni??'',previous_person:oldFriend?.person??'',password:passwordToSave}:null;
     if (await commit(next,previous===null?'Cliente creado.':'Cliente actualizado.',false,access)) {
       setClientForm(null);
       setShowClientPassword(false);
@@ -260,10 +274,10 @@ export default function App() {
         setClientPasswords(current=>{
           const nextPasswords={...(current??{})};
           if (oldFriend?.dni && oldFriend.dni!==contact.dni) delete nextPasswords[oldFriend.dni];
-          if (password) nextPasswords[contact.dni]=password;
+          if (passwordToSave) nextPasswords[contact.dni]=passwordToSave;
           return nextPasswords;
         });
-        if (password) setSavedClientAccess({person:contact.person,dni:contact.dni,password});
+        if (passwordToSave) setSavedClientAccess({person:contact.person,dni:contact.dni,password:passwordToSave});
       }
     }
   }
@@ -350,7 +364,7 @@ export default function App() {
         <div className="dashboard-grid"><section><h2>Próximos vencimientos</h2><Table headers={['Vence','Cliente','Préstamo','Pendiente']} rows={schedule.filter(item=>item.left&&item.date>=current&&item.date<=weekEnd).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.left)])} emptyText="No hay vencimientos en los próximos 7 días."/></section><section><h2>Estado de cobros</h2><p>Cobrado: <strong>{money(sum(loans,totalPaid))}</strong></p><p>Pendiente registrado: <strong>{money(sum(loans,remaining))}</strong></p><p>Cuotas vencidas: <strong>{money(sum(overdue,item=>item.left))}</strong></p></section></div>
         <section><h2>Últimos pagos</h2><Table headers={['Fecha','Cliente','Préstamo','Abono']} rows={payments.filter(row=>row.payment.date>=weekStart&&row.payment.date<=current).map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount)])} emptyText="No hay pagos en los últimos 7 días."/></section>
       </>}
-      {route==='clientes'&&<section><div className="section-head"><h2>Registro de clientes</h2><div className="buttons">{friends.some(friend=>!friend.whatsappConsent)&&<button type="button" className="secondary" disabled={saving} onClick={authorizeAllClients}>Autorizar avisos a todos</button>}<button onClick={()=>{setShowClientPassword(false);setClientForm({previous:null,person:'',dni:'',phone:'',address:'',password:'',whatsappConsent:false});}}>Nuevo cliente</button></div></div>
+      {route==='clientes'&&<section><div className="section-head"><h2>Registro de clientes</h2><div className="buttons">{friends.some(friend=>!friend.whatsappConsent)&&<button type="button" className="secondary" disabled={saving} onClick={authorizeAllClients}>Autorizar avisos a todos</button>}<button onClick={()=>{setShowClientPassword(false);setClientForm({previous:null,person:'',dni:'',phone:'',address:'',password:'',originalPassword:'',whatsappConsent:false});}}>Nuevo cliente</button></div></div>
         {clientForm&&<form className="client-form" onSubmit={saveClient}>
           <h3>{clientForm.previous===null?'Nuevo cliente':'Editar cliente'}</h3>
           <div className="form-grid">
@@ -362,16 +376,16 @@ export default function App() {
           <div className="password-field">
             <label htmlFor="client-password">Contraseña de acceso</label>
             <div className="password-control">
-              <input id="client-password" type={showClientPassword?'text':'password'} autoComplete="new-password" minLength={8} maxLength={72} value={clientForm.password??''} disabled={!server} required={Boolean(server&&clientForm.dni.trim()&&(clientForm.previous===null||clientForm.dni.trim()!==friends.find(friend=>friend.person===clientForm.previous)?.dni))} onChange={event=>setClientForm(form=>({...form,password:event.target.value}))}/>
+              <input id="client-password" type={showClientPassword?'text':'password'} autoComplete="new-password" minLength={8} maxLength={72} value={clientForm.password??''} disabled={!server} required={Boolean(server&&clientForm.dni.trim()&&(clientForm.previous===null||clientForm.dni.trim()!==friends.find(friend=>friend.person===clientForm.previous)?.dni))} onChange={event=>setClientForm(form=>({...form,password:event.target.value,passwordTouched:true}))}/>
               <button type="button" className="secondary" aria-label={showClientPassword?'Ocultar contraseña':'Mostrar contraseña'} aria-pressed={showClientPassword} disabled={!server} onClick={()=>setShowClientPassword(show=>!show)}>{showClientPassword?'Ocultar':'Mostrar'}</button>
             </div>
           </div>
-          <p className="muted">{clientForm.previous===null?'Para dar acceso al cliente, escribe su DNI y una contraseña de al menos 8 caracteres.':'Deja la contraseña vacía para conservar la actual. Escribe una nueva para cambiarla.'}</p>
+          <p className="muted">{clientForm.previous===null?'Para dar acceso al cliente, escribe su DNI y una contraseña de al menos 8 caracteres.':'La clave actual aparece aquí si ya fue registrada con esta versión. Escribe otra para cambiarla.'}</p>
           <label className="consent-line"><input type="checkbox" checked={Boolean(clientForm.whatsappConsent)} onChange={event=>setClientForm(form=>({...form,whatsappConsent:event.target.checked}))}/><span>El cliente autorizó recibir avisos de préstamos y vencimientos por WhatsApp</span></label>
           <div className="buttons"><button disabled={saving}>Guardar cliente</button><button type="button" className="secondary" onClick={()=>setClientForm(null)}>Cancelar</button></div>
         </form>}
         <label>Buscar clientes<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} placeholder="Nombre, DNI o teléfono"/></label>
-        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Clave de acceso','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<span className="client-password-cell" key={friend.person}>{!friend.dni?'—':clientPasswords===null?'No disponible':Object.prototype.hasOwnProperty.call(clientPasswords,friend.dni)?(clientPasswords[friend.dni]??'Clave anterior'):'Sin acceso'}</span>,<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>{setShowClientPassword(false);setClientForm({...friend,previous:friend.person,password:''});}}>Editar</button><button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button><button type="button" className="wa-button" title={whatsappNumber(friend.phone)?'Enviar información de préstamos por WhatsApp':'Agrega el teléfono del cliente'} aria-label={`WhatsApp para ${friend.person}`} disabled={!whatsappNumber(friend.phone)} onClick={()=>window.open(`https://wa.me/${whatsappNumber(friend.phone)}?text=${encodeURIComponent(clientLoansMessage(friend,loans,schedule,current))}`,'_blank','noopener,noreferrer')}/></div>])} emptyText="Todavía no hay clientes registrados."/>
+        <Table headers={['Nombre','DNI','Teléfono','Dirección de referencia','Avisos WhatsApp','Clave de acceso','Préstamos','Acciones']} rows={friends.filter(friend=>normalize(`${friend.person} ${friend.dni} ${friend.phone}`).includes(normalize(clientSearch))).sort((a,b)=>a.person.localeCompare(b.person,'es')).map(friend=>[friend.person,friend.dni||'—',friend.phone||'—',friend.address||'—',friend.whatsappConsent?'Autorizado':'Sin autorización',<span className="client-password-cell" key={friend.person}>{!friend.dni?'—':clientPasswords===null?'No disponible':Object.prototype.hasOwnProperty.call(clientPasswords,friend.dni)?(clientPasswords[friend.dni]??'Clave anterior'):'Sin acceso'}</span>,<button onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>,<div className="buttons" key={friend.person}><button onClick={()=>{setShowClientPassword(false);setClientForm({...friend,previous:friend.person,password:clientPasswords?.[friend.dni]??'',originalPassword:clientPasswords?.[friend.dni]??''});}}>Editar</button><button className="danger-soft" onClick={()=>deleteClient(friend)}>Eliminar</button><button type="button" className="wa-button" title={whatsappNumber(friend.phone)?'Enviar información de préstamos por WhatsApp':'Agrega el teléfono del cliente'} aria-label={`WhatsApp para ${friend.person}`} disabled={!whatsappNumber(friend.phone)} onClick={()=>window.open(`https://wa.me/${whatsappNumber(friend.phone)}?text=${encodeURIComponent(clientLoansMessage(friend,loans,schedule,current))}`,'_blank','noopener,noreferrer')}/></div>])} emptyText="Todavía no hay clientes registrados."/>
       </section>}
       {route==='nuevo'&&<section><h2>{editingLoan?'Editar préstamo':'Registrar préstamo'}</h2><form onSubmit={saveLoan}>
         <label>Persona<select value={loanForm.person} disabled={Boolean(editingLoan)} required onChange={event=>changeLoan('person',event.target.value)}><option value="">Selecciona un cliente</option>{friends.map(friend=><option key={friend.person}>{friend.person}</option>)}</select></label>

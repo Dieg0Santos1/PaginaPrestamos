@@ -114,8 +114,6 @@ try {
                 exit;
             }
         }
-        $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
-            ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
             $oldData = json_decode($previous['datos'], false, 512, JSON_THROW_ON_ERROR);
             $oldLoans = [];
@@ -190,36 +188,25 @@ try {
                 $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
             }
         }
+        $newAccessSecret = null;
         if ($accessChange !== null) {
             if ($dni !== '' && $passwordClient !== '') {
-                $keyBase64 = $config['client_password_key'] ?? '';
-                $key = is_string($keyBase64) ? base64_decode($keyBase64, true) : false;
-                if (!is_string($key) || strlen($key) !== 32) {
-                    $db->rollBack();
-                    http_response_code(503);
-                    header('Content-Type: application/json');
-                    echo json_encode(['error'=>'Configura client_password_key antes de guardar contraseñas.']);
-                    exit;
-                }
+                $key = hash_hkdf('sha256', (string) $config['password'], 32, 'prestamos-client-access-v1');
                 $nonce = random_bytes(12);
                 $tag = '';
                 $cipher = openssl_encrypt($passwordClient, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag);
                 if (!is_string($cipher) || strlen($tag) !== 16) throw new RuntimeException('No se pudo cifrar la clave del cliente');
-                $encrypted = base64_encode($nonce.$tag.$cipher);
-                $hash = password_hash($passwordClient, PASSWORD_DEFAULT);
-                try {
-                    $saveAccess = $db->prepare('INSERT INTO cliente_accesos (dni, nombre_cliente, clave_hash, clave_cifrada) VALUES (?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE nombre_cliente=VALUES(nombre_cliente), clave_hash=VALUES(clave_hash),
-                            clave_cifrada=VALUES(clave_cifrada)');
-                    $saveAccess->execute([$dni, $accessChange->person, $hash, $encrypted]);
-                } catch (PDOException $error) {
-                    error_log('Mis préstamos: no se pudo guardar el acceso cifrado del cliente.');
-                    $db->rollBack();
-                    http_response_code(503);
-                    header('Content-Type: application/json');
-                    echo json_encode(['error'=>'No se pudo guardar el acceso. Revisa la migración de la tabla cliente_accesos.']);
-                    exit;
+                $newAccessSecret = 'v1:'.base64_encode($nonce.$tag.$cipher);
+                foreach ($request->data->friends as $friend) {
+                    if ($friend->dni === $dni && $friend->person === $accessChange->person) {
+                        $friend->accessSecret = $newAccessSecret;
+                        break;
+                    }
                 }
+                $hash = password_hash($passwordClient, PASSWORD_DEFAULT);
+                $saveAccess = $db->prepare('INSERT INTO cliente_accesos (dni, nombre_cliente, clave_hash) VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE nombre_cliente=VALUES(nombre_cliente), clave_hash=VALUES(clave_hash)');
+                $saveAccess->execute([$dni, $accessChange->person, $hash]);
             } elseif ($dni !== '' && $accessChange->person !== $accessChange->previous_person) {
                 $renameAccess = $db->prepare('UPDATE cliente_accesos SET nombre_cliente=? WHERE dni=? AND nombre_cliente=?');
                 $renameAccess->execute([$accessChange->person, $dni, $accessChange->previous_person]);
@@ -229,6 +216,8 @@ try {
                 $removeOldAccess->execute([$oldDni, $accessChange->previous_person]);
             }
         }
+        $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
+            ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
         $db->commit();
         try {
             $currentClients = [];
@@ -248,7 +237,7 @@ try {
             error_log('Mis préstamos: no se pudo sincronizar el acceso de clientes.');
         }
         header('Content-Type: application/json');
-        echo json_encode(['revision'=>$request->revision+1]);
+        echo json_encode(['revision'=>$request->revision+1,'accessSecret'=>$newAccessSecret]);
         exit;
     }
     $row = $db->query('SELECT datos, revision FROM registro WHERE id=1')->fetch(PDO::FETCH_ASSOC);

@@ -61,6 +61,7 @@ export function valid(snapshot) {
     || !snapshot.friends.every(f => f && typeof f.person === 'string' && f.person.trim()
       && typeof f.dni === 'string' && /^(?:\d{8})?$/.test(f.dni)
       && typeof f.phone === 'string' && typeof f.address === 'string'
+      && (f.accessSecret === undefined || (typeof f.accessSecret === 'string' && f.accessSecret.length <= 512))
       && (f.whatsappConsent === undefined || typeof f.whatsappConsent === 'boolean'))
     || new Set(snapshot.friends.map(f => f.person)).size !== snapshot.friends.length)) return false;
   return snapshot.loans.every(l => l && typeof l.id === 'string' && l.id && typeof l.person === 'string'

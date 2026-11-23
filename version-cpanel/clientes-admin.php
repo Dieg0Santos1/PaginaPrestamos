@@ -53,26 +53,25 @@ try {
         exit;
     }
     if ($action === 'access-list' && $_SERVER['REQUEST_METHOD'] === 'GET') {
-        $keyBase64 = $config['client_password_key'] ?? '';
-        $key = is_string($keyBase64) ? base64_decode($keyBase64, true) : false;
-        if (!is_string($key) || strlen($key) !== 32) {
-            http_response_code(503);
-            echo json_encode(['error'=>'Falta configurar client_password_key.']);
-            exit;
-        }
-        $rows = $db->query('SELECT dni, clave_cifrada FROM cliente_accesos')->fetchAll(PDO::FETCH_ASSOC);
+        $key = hash_hkdf('sha256', (string) $config['password'], 32, 'prestamos-client-access-v1');
+        $accounts = array_fill_keys($db->query('SELECT dni FROM cliente_accesos')->fetchAll(PDO::FETCH_COLUMN), null);
+        $row = $db->query('SELECT datos FROM registro WHERE id=1')->fetch(PDO::FETCH_ASSOC);
+        $data = json_decode($row['datos'] ?? '{}', true, 512, JSON_THROW_ON_ERROR);
         $result = [];
-        foreach ($rows as $row) {
+        foreach ($data['friends'] ?? [] as $friend) {
+            $dni = $friend['dni'] ?? '';
+            if (!is_string($dni) || !array_key_exists($dni, $accounts)) continue;
             $clear = null;
-            if (is_string($row['clave_cifrada']) && $row['clave_cifrada'] !== '') {
-                $raw = base64_decode($row['clave_cifrada'], true);
+            $secret = $friend['accessSecret'] ?? null;
+            if (is_string($secret) && substr($secret, 0, 3) === 'v1:') {
+                $raw = base64_decode(substr($secret, 3), true);
                 if (!is_string($raw) || strlen($raw) < 29) throw new RuntimeException('Clave cifrada inválida');
                 $opened = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key, OPENSSL_RAW_DATA,
                     substr($raw, 0, 12), substr($raw, 12, 16));
                 if (!is_string($opened)) throw new RuntimeException('No se pudo descifrar la clave');
                 $clear = $opened;
             }
-            $result[] = ['dni'=>$row['dni'], 'clave'=>$clear];
+            $result[] = ['dni'=>$dni, 'clave'=>$clear];
         }
         echo json_encode($result, JSON_THROW_ON_ERROR);
         exit;
