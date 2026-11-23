@@ -1,0 +1,10 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/public_html/prestamos
+    - /bin/mkdir -p $DEPLOYPATH/react-dist/assets
+    - /bin/cp version-cpanel/index.php $DEPLOYPATH/index.php
+    - /bin/cp version-cpanel/cliente.php $DEPLOYPATH/cliente.php
+    - /bin/cp version-cpanel/clientes-admin.php $DEPLOYPATH/clientes-admin.php
+    - /bin/cp version-cpanel/react-dist/manifest.json $DEPLOYPATH/react-dist/manifest.json
+    - /bin/cp -R version-cpanel/react-dist/assets/. $DEPLOYPATH/react-dist/assets/

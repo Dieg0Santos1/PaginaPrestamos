@@ -15,6 +15,12 @@ Abre la dirección que muestra Vite, normalmente `http://127.0.0.1:5173/`. Esta 
 
 ## Compilar y publicar
 
+### Publicar sin ZIP desde GitHub
+
+Si cPanel muestra **Git Version Control**, clona `https://github.com/Dieg0Santos1/PaginaPrestamos.git` en una carpeta del usuario **fuera de `public_html`**. El archivo `.cpanel.yml` de este repositorio copia solo los archivos públicos a `$HOME/public_html/prestamos`. Comprueba primero que esa es la raíz real del subdominio y cambia `DEPLOYPATH` en `.cpanel.yml` si no coincide. En cPanel, abre el repositorio, pulsa **Update from Remote** y luego **Deploy HEAD Commit**. Las siguientes versiones usan esos mismos dos botones; no hace falta subir ZIP.
+
+Esta opción depende de que tu proveedor tenga habilitada la función Git Version Control. No ejecuta cambios de base de datos ni modifica el archivo privado `prestamos-config.php`.
+
 1. En `PaginaPrestamos/react-app`, ejecuta `npm.cmd run build`. Esto genera `../version-cpanel/react-dist/manifest.json` y los archivos de `react-dist/assets/`. La compilación elimina el HTML de Vite para que la entrada pública siga siendo `index.php`.
 2. En cPanel, comprueba que el subdominio `prestamos.dadtvplay.com` tiene raíz propia en `public_html/prestamos` y HTTPS activo.
 3. En esa raíz, reemplaza `index.php` y sube `cliente.php`, `clientes-admin.php` y la carpeta **`react-dist` completa**. La estructura debe ser:
