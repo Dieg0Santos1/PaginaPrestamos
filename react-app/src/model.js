@@ -5,6 +5,18 @@ export const dateFormat = value => value.split('-').reverse().join('/');
 export const sum = (items, value) => items.reduce((total, item) => total + value(item), 0);
 export const remaining = loan => loan.amount * loan.count - sum(loan.payments, payment => payment.amount);
 export const totalPaid = loan => sum(loan.payments, payment => payment.amount);
+export function monthlyLoanTotals(loans, year) {
+  const months = Array.from({length:12}, (_, month) => ({month, capital:0, interest:0}));
+  for (const loan of loans) {
+    if (loan.type !== 'new' || !validDate(loan.issued)) continue;
+    if (Number(loan.issued.slice(0, 4)) === year) {
+      const row = months[Number(loan.issued.slice(5, 7)) - 1];
+      row.capital += loan.principal;
+      row.interest += loan.amount * loan.count - loan.principal;
+    }
+  }
+  return months;
+}
 export const opening = data => (data.initialReceivable ?? 0) - sum(data.loans.filter(loan => loan.type === 'old'), loan => loan.principal);
 export const cash = data => (data.initialCash ?? 0)
   - sum(data.loans.filter(loan => loan.type === 'new'), loan => loan.principal)
