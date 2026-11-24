@@ -265,8 +265,8 @@ export default function App() {
     setLoanForm(previous => {
       const next = {...previous,[field]:value};
       if (!editingLoan && field==='frequency' && next.type==='new') next.count=String({week:4,fortnight:2,month:1}[value]);
-      if (!editingLoan && ['frequency','issued','type'].includes(field)) next.first=next.type==='new'?firstDue(next.issued,next.frequency):'';
-      if (['principal','frequency','count','type'].includes(field) && next.type==='new') {
+      if (!editingLoan && ['frequency','issued'].includes(field)) next.first=firstDue(next.issued,next.frequency);
+      if (['principal','frequency','count'].includes(field) && next.type==='new') {
         const principal=cents(next.principal), count=Number(next.count), rate=editingLoan?.monthlyRate ?? data?.monthlyRate ?? 0;
         next.amount=principal>0 && count>=1 && count<=120 ? (installmentWithInterest(principal,next.frequency,count,rate)/100).toFixed(2) : '';
       }
@@ -283,7 +283,7 @@ export default function App() {
     event.preventDefault();
     const editing=loans.find(loan => loan.id===editingLoan?.id);
     if (editingLoan && !editing) return flash('El préstamo ya no está disponible.');
-    const type=editing?.type ?? loanForm.type, person=editing?.person ?? loanForm.person;
+    const type=editing?.type ?? 'new', person=editing?.person ?? loanForm.person;
     const count=Number(loanForm.count), entered=cents(loanForm.principal), amount=cents(loanForm.amount);
     const principal=type==='old'?amount*count:entered;
     const originalPrincipal=type==='old'&&entered>0?entered:undefined;
@@ -448,7 +448,6 @@ export default function App() {
       </section>}
       {route==='nuevo'&&<section><h2>{editingLoan?'Editar préstamo':'Registrar préstamo'}</h2><form onSubmit={saveLoan}>
         <label>Persona<select value={loanForm.person} disabled={Boolean(editingLoan)} required onChange={event=>changeLoan('person',event.target.value)}><option value="">Selecciona un cliente</option>{friends.map(friend=><option key={friend.person}>{friend.person}</option>)}</select></label>
-        <label>Tipo<select value={loanForm.type} disabled={Boolean(editingLoan)} onChange={event=>changeLoan('type',event.target.value)}><option value="new">Nuevo desembolso</option><option value="old">Saldo anterior por detallar</option></select></label>
         <label>{loanForm.type==='old'?'Monto prestado originalmente (S/, opcional)':'Monto prestado (S/)'}<input type="number" min=".01" step=".01" max="100000000" required={loanForm.type==='new'} value={loanForm.principal} onChange={event=>changeLoan('principal',event.target.value)}/></label>
         {loanForm.type==='new'&&<label>Fecha de desembolso<input type="date" min="1900-01-01" max={current} required={!editingLoan||Boolean(editingLoan.issued)} value={loanForm.issued} onChange={event=>changeLoan('issued',event.target.value)}/></label>}
         <label>Frecuencia<select value={loanForm.frequency} onChange={event=>changeLoan('frequency',event.target.value)}><option value="week">Semanal</option><option value="fortnight">Quincenal</option><option value="month">Mensual</option></select></label>
