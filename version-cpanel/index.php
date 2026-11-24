@@ -158,7 +158,7 @@ try {
                 }
                 if (empty($consented[$loan->person ?? '']) || count($newPayments) !== count($oldPayments) + 1) continue;
                 foreach ($oldPayments as $index=>$payment) {
-                    if ($payment != $newPayments[$index]) continue 2;
+                    if (!isset($newPayments[$index]) || $payment != $newPayments[$index]) continue 2;
                 }
                 $payment = $newPayments[count($oldPayments)];
                 if (!is_string($payment->id ?? null)
@@ -176,15 +176,15 @@ try {
                 $message = 'Hola '.$person.', registramos tu abono de '.$money($payment->amount)
                     .' del '.date('d/m/Y', strtotime($payment->date))
                     .' para el préstamo N.º '.($loanIndex + 1).'.';
+                $pending = [];
                 for ($index = 0; $index < $loan->count; $index++) {
-                    $before = max(0, $loan->amount - max(0, $paidBefore - $index * $loan->amount));
-                    $after = max(0, $loan->amount - max(0, $paidAfter - $index * $loan->amount));
-                    if ($after > 0 && $after < $before) {
-                        $message .= "\nSaldo pendiente de la cuota N.º ".($index + 1).': '.$money($after).'.';
-                        break;
-                    }
+                    $left = max(0, $loan->amount - max(0, $paidAfter - $index * $loan->amount));
+                    if ($left > 0) $pending[] = 'Cuota N.º '.($index + 1).': '.$money($left);
                 }
-                $message .= "\n\nSaldo pendiente de todo el préstamo: ".$money($balance).'. Gracias.';
+                $message .= $pending
+                    ? "\n\nCuotas pendientes (".count($pending)."):\n".implode("\n", $pending)
+                    : "\n\nNo quedan cuotas pendientes.";
+                $message .= "\nSaldo pendiente de todo el préstamo: ".$money($balance).'. Gracias.';
                 $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
             }
         }
