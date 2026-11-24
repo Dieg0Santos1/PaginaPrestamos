@@ -1,10 +1,12 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, opening, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
+import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, monthlyLoanTotals, opening, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
 
 const empty = {loans:[], friends:[]};
 const key = 'mis-prestamos-v1';
 const routes = [['panel','Panel principal'],['clientes','Clientes'],['nuevo','Préstamos'],['calendario','Calendario'],['pagos','Pagos'],['comprobantes','Comprobantes'],['morosidad','Morosidad'],['reportes','Reportes'],['respaldo','Respaldo']];
 const frequencyNames = {week:'Semanal',fortnight:'Quincenal',month:'Mensual'};
+const monthNames = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const chartNumber = value => new Intl.NumberFormat('es-PE',{maximumFractionDigits:2}).format(value / 100);
 const normalize = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es');
 const firstDue = (issued,frequency) => validDate(issued) ? due(issued,frequency,1) : '';
 const datePlusDays = (value,days) => { const date=new Date(`${value}T12:00:00Z`); date.setUTCDate(date.getUTCDate()+days); return date.toISOString().slice(0,10); };
@@ -34,6 +36,34 @@ function Table({headers, rows, emptyText}) {
 
 function Metric({label,value,detail,accent=false}) {
   return <section className={accent?'accent-card':''}><span>{label}</span><div className="metric">{value}</div>{detail&&<small>{detail}</small>}</section>;
+}
+
+function MonthlyLoansChart({rows, year, years, onYearChange}) {
+  const max = Math.max(1, ...rows.flatMap(row => [row.capital, row.interest]));
+  const chartScroll = useRef(null);
+  useEffect(() => {
+    const latest = rows.reduce((last,row,index) => row.capital || row.interest ? index : last, -1);
+    if (chartScroll.current && latest >= 0) {
+      chartScroll.current.scrollLeft = Math.max(0, latest * 88 - (chartScroll.current.clientWidth - 88) / 2);
+    }
+  }, [rows, year]);
+  return <section className="monthly-loans-chart">
+    <div className="section-head chart-heading"><div><h2>Capital e interés pactado por mes</h2><p className="muted">Importes de los préstamos desembolsados en cada mes. Valores en soles.</p></div>
+      <label>Año<select value={year} onChange={event=>onYearChange(Number(event.target.value))}>{years.map(value=><option key={value} value={value}>{value}</option>)}</select></label>
+    </div>
+    <div className="chart-legend"><span><i className="legend-capital"/>Capital prestado</span><span><i className="legend-interest"/>Interés pactado</span></div>
+    {rows.every(row=>row.capital===0&&row.interest===0)&&<p className="muted chart-empty">Todavía no hay préstamos desembolsados en {year}.</p>}
+    <p className="chart-swipe-hint">Desliza para ver los demás meses ↔</p>
+    <div className="monthly-chart-scroll" ref={chartScroll} role="region" aria-label={`Gráfica mensual de préstamos de ${year}; desplázate horizontalmente para ver otros meses`} tabIndex={0}>
+      <div className="monthly-chart-bars">{rows.map(row=><div className="chart-month" key={row.month} role="group" aria-label={`${monthNames[row.month]}: capital ${money(row.capital)}, interés pactado ${money(row.interest)}`}>
+        <div className="chart-pair">{[['capital',row.capital],['interest',row.interest]].map(([kind,value])=><div className="chart-series" key={kind} title={money(value)} aria-hidden="true">
+          <span className="chart-value">{value ? chartNumber(value) : ''}</span>
+          <span className={`chart-bar ${kind}`} style={{height:value ? `${Math.max(5, Math.round(value / max * 150))}px` : 0}}/>
+        </div>)}</div>
+        <span className="chart-month-name">{monthNames[row.month]}</span>
+      </div>)}</div>
+    </div>
+  </section>;
 }
 
 function WhatsAppButton({item,data}) {
@@ -93,6 +123,7 @@ export default function App() {
   const [cashAmount,setCashAmount] = useState('');
   const [cashDescription,setCashDescription] = useState('');
   const [cashHistory,setCashHistory] = useState(false);
+  const [chartYear,setChartYear] = useState(() => Number(today().slice(0,4)));
   const [rate,setRate] = useState(() => (data?.monthlyRate ?? 0) / 100);
   const [clientSearch,setClientSearch] = useState('');
   const [clientForm,setClientForm] = useState(null);
@@ -253,6 +284,8 @@ export default function App() {
   const schedule = useMemo(() => data ? installmentsOf(data) : [],[data]);
   const payments = useMemo(() => data ? paymentsOf(data) : [],[data]);
   const newLoans = loans.filter(loan => loan.type === 'new');
+  const chartYears = [...new Set([Number(current.slice(0,4)), ...newLoans.filter(loan=>validDate(loan.issued)).map(loan=>Number(loan.issued.slice(0,4)) )])].sort((a,b)=>b-a);
+  const monthlyLoans = useMemo(() => monthlyLoanTotals(loans,chartYear),[loans,chartYear]);
   const recovered = sum(newLoans,loan => Math.min(loan.principal,totalPaid(loan)));
   const capitalPrestadoPendiente = capitalBase + sum(newLoans,loan=>loan.principal) - recovered - capitalNuevoEnCorte;
   const totalPorCobrar = data ? opening(data) + sum(loans,remaining) : 0;
@@ -420,6 +453,7 @@ export default function App() {
         <div className="dashboard-grid three"><section><h2>Ingreso / egreso de caja</h2><div className="cash-entry-row"><label>Monto (S/)<input type="number" min=".01" max="100000000" step=".01" value={cashAmount} onChange={event=>setCashAmount(event.target.value)} placeholder="0.00"/></label><label>Descripción<input type="text" maxLength="200" value={cashDescription} onChange={event=>setCashDescription(event.target.value)} placeholder="Motivo del movimiento"/></label></div><div className="buttons cash-actions"><button disabled={saving} onClick={()=>changeCash('income')}>Ingreso</button><button className="danger" disabled={saving} onClick={()=>changeCash('expense')}>Egreso</button><button className="secondary" onClick={()=>setCashHistory(true)}>Movimientos</button></div></section>
           <section><h2>Interés mensual</h2><form onSubmit={saveRate}><label>Tasa mensual (%)<input type="number" min="0" step=".01" value={rate} onChange={event=>setRate(event.target.value)}/></label><button disabled={saving}>Guardar tasa</button></form></section>
           <Metric label="Caja disponible + por cobrar" value={money(cash(data)+opening(data)+sum(loans,remaining))} detail="Suma de los dos saldos del panel"/></div>
+        <MonthlyLoansChart rows={monthlyLoans} year={chartYear} years={chartYears} onYearChange={setChartYear}/>
         <div className="dashboard-grid"><section><h2>Próximos vencimientos</h2><Table headers={['Vence','Cliente','Préstamo','Pendiente']} rows={schedule.filter(item=>item.left&&item.date>=current&&item.date<=weekEnd).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.left)])} emptyText="No hay vencimientos en los próximos 7 días."/></section><section><h2>Estado de cobros</h2><p>Cobrado: <strong>{money(sum(loans,totalPaid))}</strong></p><p>Pendiente registrado: <strong>{money(sum(loans,remaining))}</strong></p><p>Cuotas vencidas: <strong>{money(sum(overdue,item=>item.left))}</strong></p></section></div>
         <section><h2>Últimos pagos</h2><Table headers={['Fecha','Cliente','Préstamo','Abono']} rows={payments.filter(row=>row.payment.date>=weekStart&&row.payment.date<=current).map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount)])} emptyText="No hay pagos en los últimos 7 días."/></section>
       </>}
