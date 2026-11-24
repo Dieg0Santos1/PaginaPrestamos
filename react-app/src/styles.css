@@ -15,6 +15,29 @@
 .cash-entry-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:12px}
 .cash-entry-row label{min-width:0;margin:0}
 .cash-actions{margin-top:12px}
+.monthly-loans-chart{padding:22px 24px}
+.chart-heading{align-items:flex-start;gap:20px}
+.chart-heading h2{margin-bottom:5px}
+.chart-heading p{margin:0;font-size:.9rem}
+.chart-heading label{margin:0;min-width:95px;font-size:.85rem}
+.chart-heading select{min-height:38px}
+.chart-legend{display:flex;flex-wrap:wrap;gap:18px;margin:17px 0 12px;color:#526773;font-size:.86rem}
+.chart-legend span{display:inline-flex;align-items:center;gap:7px}
+.chart-legend i{display:inline-block;width:10px;height:10px;border-radius:50%}
+.chart-empty{margin:0 0 8px;font-size:.9rem}
+.chart-swipe-hint{display:none;margin:0 0 8px;color:#526773;font-size:.8rem}
+.legend-capital{background:#1686f4}
+.legend-interest{background:#f14b80}
+.monthly-chart-scroll{overflow-x:auto;max-width:100%;border-radius:10px;background:linear-gradient(#fff 75%,#f5f8fa)}
+.monthly-chart-bars{display:grid;grid-template-columns:repeat(12,minmax(88px,1fr));min-width:1056px;padding:16px 12px 12px}
+.chart-month{display:flex;flex-direction:column;align-items:center;min-width:0}
+.chart-pair{display:flex;align-items:flex-end;justify-content:center;gap:8px;height:185px}
+.chart-series{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;width:36px;height:100%}
+.chart-value{margin-bottom:6px;color:#3e5872;font-size:.69rem;font-weight:650;white-space:nowrap}
+.chart-bar{display:block;width:16px;border-radius:9px 9px 3px 3px}
+.chart-bar.capital{background:linear-gradient(#00d0e4,#1658fa)}
+.chart-bar.interest{background:linear-gradient(#ff9db3,#eb1658)}
+.chart-month-name{margin-top:10px;color:#243c55;font-size:.78rem}
 .consent-line{display:flex;align-items:flex-start;gap:10px;font-weight:500;line-height:1.4}
 .consent-line input{flex:none;width:18px;height:18px;min-height:18px;margin:2px 0 0;accent-color:#087b66}
 .loan-list{padding:0;border:0;background:transparent}
@@ -65,6 +88,10 @@
   .loan-accordion-body{padding:8px 12px 12px}
   .report-actions button{width:100%}
   .cash-entry-row{grid-template-columns:1fr}
+  .monthly-loans-chart{padding:16px 12px}
+  .chart-heading{flex-direction:column;gap:12px}
+  .chart-heading label{width:120px}
+  .chart-swipe-hint{display:block}
 }
 @media(max-width:420px){
   .metrics{grid-template-columns:1fr}
