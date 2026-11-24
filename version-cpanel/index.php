@@ -96,7 +96,8 @@ try {
             $passwordClient = $accessChange->password;
             if (($dni !== '' && !preg_match('/^\d{8}$/D', $dni))
                 || ($oldDni !== '' && !preg_match('/^\d{8}$/D', $oldDni))
-                || ($passwordClient !== '' && ($dni === '' || strlen($passwordClient) < 8 || strlen($passwordClient) > 72))
+                || ($passwordClient !== '' && ($dni === '' || strlen($passwordClient) < 8
+                    || strlen($passwordClient) > 72 || preg_match('/[\r\n]/', $passwordClient)))
                 || ($dni !== '' && $passwordClient === '' && ($oldDni !== $dni || $accessChange->previous_person === ''))) {
                 $db->rollBack();
                 http_response_code(400);
@@ -112,6 +113,32 @@ try {
                 $db->rollBack();
                 http_response_code(400);
                 exit;
+            }
+            $client = array_values($newMatches)[0];
+            $clientPhone = preg_replace('/\D+/', '', (string) ($client->phone ?? ''));
+            if (!preg_match('/^(?:9\d{8}|519\d{8})$/', $clientPhone)
+                || ($client->whatsappConsent ?? false) !== true
+                || $dni === '') {
+                $db->rollBack();
+                http_response_code(400);
+                exit;
+            }
+            $oldClient = $oldMatches ? array_values($oldMatches)[0] : null;
+            if ($passwordClient === '' && (!is_string($oldClient->accessSecret ?? null)
+                || !str_starts_with($oldClient->accessSecret, 'v1:')
+                || ($client->accessSecret ?? null) !== $oldClient->accessSecret)) {
+                $db->rollBack();
+                http_response_code(400);
+                exit;
+            }
+            if ($passwordClient === '') {
+                $existingAccess = $db->prepare('SELECT nombre_cliente FROM cliente_accesos WHERE dni=?');
+                $existingAccess->execute([$dni]);
+                if ($existingAccess->fetchColumn() !== $accessChange->previous_person) {
+                    $db->rollBack();
+                    http_response_code(400);
+                    exit;
+                }
             }
         }
         if (!empty($config['whatsapp_auto_enabled']) && empty($request->restore)) {
@@ -189,6 +216,7 @@ try {
             }
         }
         $newAccessSecret = null;
+        $accessNotice = null;
         if ($accessChange !== null) {
             if ($dni !== '' && $passwordClient !== '') {
                 $key = hash_hkdf('sha256', (string) $config['password'], 32, 'prestamos-client-access-v1');
@@ -215,6 +243,19 @@ try {
                 $removeOldAccess = $db->prepare('DELETE FROM cliente_accesos WHERE dni=? AND nombre_cliente=?');
                 $removeOldAccess->execute([$oldDni, $accessChange->previous_person]);
             }
+            if (!empty($config['whatsapp_auto_enabled'])) {
+                $cancelAccess = $db->prepare("UPDATE whatsapp_outbox SET status='skipped',
+                    last_error='Datos de acceso actualizados antes del envío'
+                    WHERE kind='access' AND loan_id=? AND status='pending'");
+                $cancelAccess->execute(['client:'.$dni]);
+                if ($oldDni !== '' && $oldDni !== $dni) $cancelAccess->execute(['client:'.$oldDni]);
+                $enqueueAccess = $db->prepare("INSERT INTO whatsapp_outbox
+                    (message_key, kind, loan_id) VALUES (?, 'access', ?)");
+                $enqueueAccess->execute([hash('sha256', 'access:'.$dni.':'.($request->revision + 1)), 'client:'.$dni]);
+                $accessNotice = 'queued';
+            } else {
+                $accessNotice = 'disabled';
+            }
         }
         $db->prepare('UPDATE registro SET datos=?, revision=revision+1 WHERE id=1')
             ->execute([json_encode($request->data, JSON_THROW_ON_ERROR)]);
@@ -237,7 +278,8 @@ try {
             error_log('Mis préstamos: no se pudo sincronizar el acceso de clientes.');
         }
         header('Content-Type: application/json');
-        echo json_encode(['revision'=>$request->revision+1,'accessSecret'=>$newAccessSecret]);
+        echo json_encode(['revision'=>$request->revision+1,'accessSecret'=>$newAccessSecret,
+            'accessNotice'=>$accessNotice]);
         exit;
     }
     $row = $db->query('SELECT datos, revision FROM registro WHERE id=1')->fetch(PDO::FETCH_ASSOC);
