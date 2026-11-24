@@ -101,40 +101,76 @@ try {
             claimed_at=NOW() WHERE id=?")->execute([$job['id']]);
         $db->commit();
 
-        $loan = $loans[$job['loan_id']] ?? null;
-        $friend = $loan ? ($friends[$loan->person ?? ''] ?? null) : null;
-        $phone = $friend ? validPhone((string) ($friend->phone ?? '')) : null;
-        if (!$loan || ($friend->whatsappConsent ?? false) !== true || !$phone) {
-            finish($db, (int) $job['id'], 'skipped', null, null, 'Préstamo, permiso o teléfono no disponible');
-            exit(0);
-        }
-        $person = trim((string) $loan->person);
-        if ($job['kind'] === 'created') {
-            $message = 'Hola '.$person.', registramos tu préstamo con '.(int) $loan->count
-                .' cuota(s) de '.money((int) $loan->amount).'. La primera vence el '
-                .date('d/m/Y', strtotime((string) $loan->first)).'. Gracias.';
-        } elseif ($job['kind'] === 'due') {
-            if ($hour < 9 || $hour >= 20) {
-                finish($db, (int) $job['id'], 'skipped', null, null, 'Fuera del horario de recordatorios');
+        if ($job['kind'] === 'access') {
+            $dni = str_starts_with($job['loan_id'], 'client:') ? substr($job['loan_id'], 7) : '';
+            $friend = null;
+            foreach ($data->friends ?? [] as $candidate) {
+                if (($candidate->dni ?? '') === $dni) { $friend = $candidate; break; }
+            }
+            $phone = $friend ? validPhone((string) ($friend->phone ?? '')) : null;
+            $account = $db->prepare('SELECT nombre_cliente FROM cliente_accesos WHERE dni=?');
+            $account->execute([$dni]);
+            if (!preg_match('/^\d{8}$/D', $dni) || !$friend || !$phone
+                || ($friend->whatsappConsent ?? false) !== true
+                || $account->fetchColumn() !== ($friend->person ?? null)) {
+                finish($db, (int) $job['id'], 'skipped', null, null, 'Acceso, permiso o teléfono no disponible');
                 exit(0);
             }
-            $index = (int) $job['installment_index'];
-            $part = installments($loan)[$index] ?? null;
-            if (!$part || $part['date'] !== $today || $part['left'] <= 0) {
-                finish($db, (int) $job['id'], 'skipped', null, null, 'La cuota ya no está pendiente hoy');
-                exit(0);
-            }
-            $message = 'Hola '.$person.', hoy vence tu cuota. Saldo pendiente: '
-                .money($part['left']).'. Gracias.';
-        } elseif ($job['kind'] === 'payment') {
-            $message = trim((string) ($job['message_text'] ?? ''));
-            if ($message === '') {
-                finish($db, (int) $job['id'], 'failed', null, null, 'Comprobante de abono vacío');
+            $secret = $friend->accessSecret ?? null;
+            $raw = is_string($secret) && str_starts_with($secret, 'v1:')
+                ? base64_decode(substr($secret, 3), true) : false;
+            if (!is_string($raw) || strlen($raw) < 29) {
+                finish($db, (int) $job['id'], 'failed', null, null, 'Clave de acceso no disponible');
                 exit(1);
             }
+            $key = hash_hkdf('sha256', (string) $config['password'], 32, 'prestamos-client-access-v1');
+            $passwordClient = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key,
+                OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+            if (!is_string($passwordClient) || $passwordClient === '') {
+                finish($db, (int) $job['id'], 'failed', null, null, 'No se pudo leer la clave de acceso');
+                exit(1);
+            }
+            $person = trim(preg_replace('/[\r\n]+/', ' ', (string) $friend->person));
+            $message = 'Hola '.$person.', ya puedes consultar tus préstamos.'
+                ."\nUsuario (DNI): ".$dni
+                ."\nClave de acceso: ".$passwordClient
+                ."\nIngresa aquí: https://prestamos.dadtvplay.com/cliente.php";
         } else {
-            finish($db, (int) $job['id'], 'failed', null, null, 'Tipo de aviso inválido');
-            exit(1);
+            $loan = $loans[$job['loan_id']] ?? null;
+            $friend = $loan ? ($friends[$loan->person ?? ''] ?? null) : null;
+            $phone = $friend ? validPhone((string) ($friend->phone ?? '')) : null;
+            if (!$loan || ($friend->whatsappConsent ?? false) !== true || !$phone) {
+                finish($db, (int) $job['id'], 'skipped', null, null, 'Préstamo, permiso o teléfono no disponible');
+                exit(0);
+            }
+            $person = trim((string) $loan->person);
+            if ($job['kind'] === 'created') {
+                $message = 'Hola '.$person.', registramos tu préstamo con '.(int) $loan->count
+                    .' cuota(s) de '.money((int) $loan->amount).'. La primera vence el '
+                    .date('d/m/Y', strtotime((string) $loan->first)).'. Gracias.';
+            } elseif ($job['kind'] === 'due') {
+                if ($hour < 9 || $hour >= 20) {
+                    finish($db, (int) $job['id'], 'skipped', null, null, 'Fuera del horario de recordatorios');
+                    exit(0);
+                }
+                $index = (int) $job['installment_index'];
+                $part = installments($loan)[$index] ?? null;
+                if (!$part || $part['date'] !== $today || $part['left'] <= 0) {
+                    finish($db, (int) $job['id'], 'skipped', null, null, 'La cuota ya no está pendiente hoy');
+                    exit(0);
+                }
+                $message = 'Hola '.$person.', hoy vence tu cuota. Saldo pendiente: '
+                    .money($part['left']).'. Gracias.';
+            } elseif ($job['kind'] === 'payment') {
+                $message = trim((string) ($job['message_text'] ?? ''));
+                if ($message === '') {
+                    finish($db, (int) $job['id'], 'failed', null, null, 'Comprobante de abono vacío');
+                    exit(1);
+                }
+            } else {
+                finish($db, (int) $job['id'], 'failed', null, null, 'Tipo de aviso inválido');
+                exit(1);
+            }
         }
 
         $handle = curl_init('https://www.wasenderapi.com/api/send-message');
@@ -150,12 +186,13 @@ try {
         $http = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
         curl_close($handle);
         if ($response === false || $http === 0) {
-            finish($db, (int) $job['id'], 'unknown', $phone, $message, 'Sin respuesta del proveedor; revisar antes de reenviar');
+            finish($db, (int) $job['id'], 'unknown', $phone,
+                $job['kind'] === 'access' ? null : $message, 'Sin respuesta del proveedor; revisar antes de reenviar');
             exit(1);
         }
         $result = json_decode($response, true);
         if ($http >= 200 && $http < 300 && ($result['success'] ?? false) === true) {
-            finish($db, (int) $job['id'], 'accepted', $phone, $message, null);
+            finish($db, (int) $job['id'], 'accepted', $phone, $job['kind'] === 'access' ? null : $message, null);
             exit(0);
         }
         if ($http === 429) {
@@ -165,7 +202,8 @@ try {
                 ->execute([$retry, $job['id']]);
             exit(0);
         }
-        finish($db, (int) $job['id'], $http >= 500 ? 'unknown' : 'failed', $phone, $message,
+        finish($db, (int) $job['id'], $http >= 500 ? 'unknown' : 'failed', $phone,
+            $job['kind'] === 'access' ? null : $message,
             'Proveedor HTTP '.$http);
         exit(1);
     } finally {
