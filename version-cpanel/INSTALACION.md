@@ -55,6 +55,12 @@ Al actualizar la interfaz, repite la compilación y reemplaza `index.php`, `clie
 4. El cliente entra a `https://prestamos.dadtvplay.com/cliente.php` con su DNI y su clave. Puede ver únicamente los préstamos vinculados a su ficha y enviar una captura JPG, PNG o WebP de hasta 4 MB, indicando el préstamo y el monto enviado.
 5. En **Comprobantes**, revisa la captura y confirma el ingreso en Yape. Puedes analizarla con IA o registrar el pago manualmente desde la misma pantalla; ambos caminos muestran una confirmación antes de crear el abono.
 
+### Envío de acceso al guardar clientes
+
+La ficha requiere un celular peruano válido. En el hosting también requiere DNI de ocho dígitos, clave de acceso y la autorización del cliente para recibir mensajes por WhatsApp. Al guardar un cliente nuevo o editar su ficha, `index.php` coloca en `whatsapp_outbox` un aviso de acceso. El cron actualizado envía al celular el DNI como usuario, la clave vigente y `https://prestamos.dadtvplay.com/cliente.php`. El aviso se prepara en la misma transacción que guarda la ficha y sale en la siguiente ejecución del cron. Si la clave antigua solo estaba guardada como hash, asigna una nueva en el formulario antes de guardar.
+
+Para esta función publica `index.php` y la carpeta `react-dist` de la versión nueva y reemplaza también `/home/USUARIO/prestamos-whatsapp-cron.php`. No hace falta modificar las tablas existentes. La clave se descifra únicamente al enviar; `whatsapp_outbox.message_text` queda vacío para este tipo de aviso. El mensaje con la clave sí queda en el chat de WhatsApp del cliente, por lo que debe conservar su teléfono y su cuenta protegidos.
+
 ### Lectura de vouchers con IA
 
 En el archivo privado `/home/USUARIO/prestamos-config.php`, añade `'openai_api_key'=>'TU_CLAVE_API'` (sin publicarla ni subirla a GitHub). Opcionalmente puedes definir `'openai_voucher_model'=>'gpt-6.1-terra'`. PHP necesita la extensión cURL y salida HTTPS hacia `api.openai.com`. Cada clic en **Analizar voucher** hace una llamada a la API de OpenAI y puede generar un cargo según el uso de tu cuenta.
