@@ -215,6 +215,7 @@ export default function App() {
     if ((!data && !restore) || busy.current) { flash('Hay un guardado en curso o el registro no está disponible.'); return false; }
     if (!valid(next)) { flash('El registro contiene datos inválidos.'); return false; }
     busy.current = true; setSaving(true);
+    let savedAccessNotice = null;
     try {
       if (server) {
         const response = await fetch('?api=1', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':server.token},body:JSON.stringify({revision:revision.current,data:next,restore,...(clientAccess?{client_access:clientAccess}:{})})});
@@ -226,6 +227,7 @@ export default function App() {
         }
         const saved=await response.json();
         revision.current = saved.revision;
+        savedAccessNotice = saved.accessNotice ?? null;
         if (saved.accessSecret && clientAccess) {
           next={...next,friends:next.friends.map(friend=>friend.person===clientAccess.person?{...friend,accessSecret:saved.accessSecret}:friend)};
         }
@@ -234,7 +236,11 @@ export default function App() {
         stored.current=JSON.stringify(next);
         localStorage.setItem(key,stored.current);
       }
-      setData(withFriends(next)); flash(message); return true;
+      setData(withFriends(next));
+      flash(clientAccess && server
+        ? message + (savedAccessNotice === 'queued' ? ' Datos de acceso preparados para WhatsApp.' : ' No se preparó el WhatsApp de acceso; revisa la configuración y autorización.')
+        : message);
+      return true;
     } catch (error) { flash(error.message&&error.message!=='No se pudo guardar'?error.message:'No se pudo confirmar el guardado. Recarga para comprobar si quedó registrado.'); return false; }
     finally { busy.current=false; setSaving(false); }
   }
@@ -309,11 +315,14 @@ export default function App() {
     if (oldFriend?.accessSecret && contact.dni===oldFriend.dni) contact.accessSecret=oldFriend.accessSecret;
     const passwordToSave=password && (password!==(clientForm.originalPassword??'') || contact.dni!==oldFriend?.dni) ? password : '';
     if (!contact.person) return flash('Escribe el nombre del cliente.');
+    if (!whatsappNumber(contact.phone)) return flash('Escribe un celular peruano válido de 9 dígitos.');
+    if (server && !/^\d{8}$/.test(contact.dni)) return flash('El DNI debe tener 8 dígitos.');
     if (contact.dni && !/^\d{8}$/.test(contact.dni)) return flash('El DNI debe tener 8 dígitos.');
     if (contact.dni && friends.some(friend=>friend.person!==previous&&friend.dni===contact.dni)) return flash('Ese DNI ya pertenece a otro cliente.');
     if (friends.some(friend => friend.person!==previous && normalize(friend.person)===normalize(contact.person))) return flash('Ya existe un cliente con ese nombre.');
     if (password && (!contact.dni || password.length<8 || password.length>72)) return flash('Para crear una contraseña, escribe un DNI de 8 dígitos y una clave de 8 a 72 caracteres.');
-    if (server && contact.dni && (previous===null || contact.dni!==oldFriend?.dni) && !passwordToSave) return flash('Escribe una contraseña de al menos 8 caracteres para el acceso del cliente.');
+    if (server && (!oldFriend?.accessSecret || contact.dni!==oldFriend.dni) && !passwordToSave) return flash('Escribe una contraseña de al menos 8 caracteres para el acceso del cliente.');
+    if (server && !contact.whatsappConsent) return flash('Marca la autorización para enviar al cliente sus datos de acceso por WhatsApp.');
     const next={...data,friends:previous===null?[...friends,contact]:friends.map(friend=>friend.person===previous?contact:friend),loans:loans.map(loan=>loan.person===previous?{...loan,person:contact.person}:loan)};
     const access=server?{dni:contact.dni,person:contact.person,previous_dni:oldFriend?.dni??'',previous_person:oldFriend?.person??'',password:passwordToSave}:null;
     if (await commit(next,previous===null?'Cliente creado.':'Cliente actualizado.',false,access)) {
@@ -419,19 +428,19 @@ export default function App() {
           <h3>{clientForm.previous===null?'Nuevo cliente':'Editar cliente'}</h3>
           <div className="form-grid">
             <label className="client-name">Nombre completo<input value={clientForm.person} required maxLength={100} onChange={event=>setClientForm(form=>({...form,person:event.target.value}))}/></label>
-            <label>DNI (opcional)<input type="text" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} value={clientForm.dni} onChange={event=>setClientForm(form=>({...form,dni:event.target.value}))}/></label>
-            <label>Teléfono<input type="tel" maxLength={30} value={clientForm.phone} onChange={event=>setClientForm(form=>({...form,phone:event.target.value}))}/></label>
+            <label>DNI<input type="text" inputMode="numeric" pattern="[0-9]{8}" maxLength={8} required={Boolean(server)} value={clientForm.dni} onChange={event=>setClientForm(form=>({...form,dni:event.target.value}))}/></label>
+            <label>Teléfono celular<input type="tel" required maxLength={30} value={clientForm.phone} onChange={event=>setClientForm(form=>({...form,phone:event.target.value}))}/></label>
             <label>Dirección de referencia<input maxLength={200} value={clientForm.address} onChange={event=>setClientForm(form=>({...form,address:event.target.value}))}/></label>
           </div>
           <div className="password-field">
             <label htmlFor="client-password">Contraseña de acceso</label>
             <div className="password-control">
-              <input id="client-password" type={showClientPassword?'text':'password'} autoComplete="new-password" minLength={8} maxLength={72} value={clientForm.password??''} disabled={!server} required={Boolean(server&&clientForm.dni.trim()&&(clientForm.previous===null||clientForm.dni.trim()!==friends.find(friend=>friend.person===clientForm.previous)?.dni))} onChange={event=>setClientForm(form=>({...form,password:event.target.value,passwordTouched:true}))}/>
+              <input id="client-password" type={showClientPassword?'text':'password'} autoComplete="new-password" minLength={8} maxLength={72} value={clientForm.password??''} disabled={!server} required={Boolean(server&&(!friends.find(friend=>friend.person===clientForm.previous)?.accessSecret||clientForm.dni.trim()!==friends.find(friend=>friend.person===clientForm.previous)?.dni))} onChange={event=>setClientForm(form=>({...form,password:event.target.value,passwordTouched:true}))}/>
               <button type="button" className="secondary" aria-label={showClientPassword?'Ocultar contraseña':'Mostrar contraseña'} aria-pressed={showClientPassword} disabled={!server} onClick={()=>setShowClientPassword(show=>!show)}>{showClientPassword?'Ocultar':'Mostrar'}</button>
             </div>
           </div>
           <p className="muted">{clientForm.previous===null?'Para dar acceso al cliente, escribe su DNI y una contraseña de al menos 8 caracteres.':'La clave actual aparece aquí si ya fue registrada con esta versión. Escribe otra para cambiarla.'}</p>
-          <label className="consent-line"><input type="checkbox" checked={Boolean(clientForm.whatsappConsent)} onChange={event=>setClientForm(form=>({...form,whatsappConsent:event.target.checked}))}/><span>El cliente autorizó recibir avisos de préstamos y vencimientos por WhatsApp</span></label>
+          <label className="consent-line"><input type="checkbox" required={Boolean(server)} checked={Boolean(clientForm.whatsappConsent)} onChange={event=>setClientForm(form=>({...form,whatsappConsent:event.target.checked}))}/><span>El cliente autorizó recibir sus datos de acceso y avisos de préstamos por WhatsApp</span></label>
           <div className="buttons"><button disabled={saving}>Guardar cliente</button><button type="button" className="secondary" onClick={()=>setClientForm(null)}>Cancelar</button></div>
         </form>}
         <label>Buscar clientes<input type="search" value={clientSearch} onChange={event=>setClientSearch(event.target.value)} placeholder="Nombre, DNI o teléfono"/></label>
