@@ -251,7 +251,17 @@ try {
                 $money = static fn (int $cents): string => 'S/ '.number_format($cents / 100, 2, '.', ',');
                 $message = 'Hola '.$owners[0]['person'].', registramos tu abono de '.$money($amount)
                     .' del '.$parsedDate->format('d/m/Y').' para el préstamo N.º '.($loanIndex + 1)
-                    .".\n\nSaldo pendiente de todo el préstamo: ".$money($balance - $amount).'. Gracias.';
+                    .'.';
+                $pending = [];
+                $paidAfter = $paid + $amount;
+                for ($index = 0; $index < (int) $loan['count']; $index++) {
+                    $left = max(0, (int) $loan['amount'] - max(0, $paidAfter - $index * (int) $loan['amount']));
+                    if ($left > 0) $pending[] = 'Cuota N.º '.($index + 1).': '.$money($left);
+                }
+                $message .= $pending
+                    ? "\n\nCuotas pendientes (".count($pending)."):\n".implode("\n", $pending)
+                    : "\n\nNo quedan cuotas pendientes.";
+                $message .= "\nSaldo pendiente de todo el préstamo: ".$money($balance - $amount).'. Gracias.';
                 $enqueue = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
                     (message_key, kind, loan_id, message_text) VALUES (?, 'payment', ?, ?)");
                 $enqueue->execute([hash('sha256', 'payment:'.$loan['id'].':'.$paymentId), $loan['id'], $message]);
