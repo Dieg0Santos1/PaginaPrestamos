@@ -168,7 +168,7 @@ try {
             $enqueuePayment = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
                 (message_key, kind, loan_id, message_text) VALUES (?, 'payment', ?, ?)");
             $money = static fn (int $cents): string => 'S/ '.number_format($cents / 100, 2, '.', ',');
-            foreach ($request->data->loans as $loanIndex=>$loan) {
+            foreach ($request->data->loans as $loan) {
                 if (!is_string($loan->id ?? null) || !isset($oldLoans[$loan->id])) continue;
                 $oldPayments = $oldLoans[$loan->id]->payments ?? [];
                 $newPayments = $loan->payments ?? [];
@@ -192,26 +192,21 @@ try {
                     || !preg_match('/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i', $payment->id)
                     || !is_int($payment->amount ?? null) || $payment->amount <= 0
                     || !is_string($payment->date ?? null) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $payment->date)
+                    || !is_int($loan->principal ?? null) || $loan->principal <= 0
                     || !is_int($loan->amount ?? null) || $loan->amount <= 0
-                    || !is_int($loan->count ?? null) || $loan->count < 1 || $loan->count > 120) continue;
+                    || !is_int($loan->count ?? null) || $loan->count < 1 || $loan->count > 120
+                    || !is_string($loan->first ?? null)) continue;
                 $paidBefore = 0;
                 foreach ($oldPayments as $oldPayment) $paidBefore += (int) ($oldPayment->amount ?? 0);
                 $paidAfter = $paidBefore + $payment->amount;
                 if ($paidAfter > $loan->amount * $loan->count) continue;
-                $balance = max(0, $loan->amount * $loan->count - $paidAfter);
-                $person = trim(preg_replace('/[\r\n]+/', ' ', (string) $loan->person));
-                $message = 'Hola '.$person.', registramos tu abono de '.$money($payment->amount)
-                    .' del '.date('d/m/Y', strtotime($payment->date))
-                    .' para el préstamo N.º '.($loanIndex + 1).'.';
-                $pending = [];
-                for ($index = 0; $index < $loan->count; $index++) {
-                    $left = max(0, $loan->amount - max(0, $paidAfter - $index * $loan->amount));
-                    if ($left > 0) $pending[] = 'Cuota N.º '.($index + 1).': '.$money($left);
-                }
-                $message .= $pending
-                    ? "\n\nCuotas pendientes (".count($pending)."):\n".implode("\n", $pending)
-                    : "\n\nNo quedan cuotas pendientes.";
-                $message .= "\nSaldo pendiente de todo el préstamo: ".$money($balance).'. Gracias.';
+                $person = trim(str_replace('*', '', preg_replace('/[\r\n]+/', ' ', (string) $loan->person)));
+                $principal = ($loan->type ?? '') === 'old' && is_int($loan->originalPrincipal ?? null)
+                    ? $loan->originalPrincipal : $loan->principal;
+                $message = 'Hola *'.$person."*:\n"
+                    .'Registramos tu préstamo de '.$money($principal).' con '.$loan->count
+                    .' cuota(s) de '.$money($loan->amount).".\n"
+                    .'La primera vence el '.date('d/m/Y', strtotime($loan->first)).'. Gracias.';
                 $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
             }
         }
