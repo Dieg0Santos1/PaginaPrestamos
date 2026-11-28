@@ -145,9 +145,13 @@ try {
             }
             $person = trim((string) $loan->person);
             if ($job['kind'] === 'created') {
-                $message = 'Hola '.$person.', registramos tu préstamo con '.(int) $loan->count
-                    .' cuota(s) de '.money((int) $loan->amount).'. La primera vence el '
-                    .date('d/m/Y', strtotime((string) $loan->first)).'. Gracias.';
+                $name = trim(str_replace('*', '', preg_replace('/[\r\n]+/', ' ', $person)));
+                $principal = ($loan->type ?? '') === 'old' && is_int($loan->originalPrincipal ?? null)
+                    ? $loan->originalPrincipal : (int) ($loan->principal ?? 0);
+                $message = 'Hola *'.$name."*:\n"
+                    .'Registramos tu préstamo de '.money($principal).' con '.(int) $loan->count
+                    .' cuota(s) de '.money((int) $loan->amount).".\n"
+                    .'La primera vence el '.date('d/m/Y', strtotime((string) $loan->first)).'. Gracias.';
             } elseif ($job['kind'] === 'due') {
                 if ($hour < 9 || $hour >= 20) {
                     finish($db, (int) $job['id'], 'skipped', null, null, 'Fuera del horario de recordatorios');
