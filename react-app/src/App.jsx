@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, monthlyLoanTotals, opening, paidOffClients, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
+import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, monthlyLoanTotals, opening, paidOffClients, paymentsOf, remaining, reportCsv, reportLoanEntries, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
 
 const empty = {loans:[], friends:[]};
 const key = 'mis-prestamos-v1';
@@ -518,7 +518,7 @@ export default function App() {
         <div className="report-actions"><button type="button" onClick={()=>download(`reporte-prestamos-${current}.csv`,reportCsv(reportRows(loans,current)),'text/csv;charset=utf-8')}>Descargar reporte para Excel</button></div>
         <div className="metrics report-metrics"><Metric label="Ganancia pactada" value={money(sum(newLoans,loan=>loan.amount*loan.count-loan.principal))}/><Metric label="Ganancia cobrada" value={money(sum(newLoans,totalPaid)-recovered)}/><Metric label="Capital recuperado" value={money(recovered)}/><Metric label="Cobros de saldos anteriores" value={money(sum(loans.filter(loan=>loan.type==='old'),totalPaid))}/></div>
         {!loans.length&&<p className="muted">Todavía no hay préstamos registrados.</p>}
-        {loans.map((loan,index)=><details className="loan-accordion" key={loan.id}><summary><span>N.º {index+1} · {loan.person} · {frequencyNames[loan.frequency]} · {dateFormat(loan.first)}</span><strong>{remaining(loan)?`${money(remaining(loan))} pendiente`:'Pagado'}</strong></summary><div className="loan-accordion-body"><Table headers={['Vence','Cuota','Pendiente']} rows={schedule.filter(item=>item.loan.id===loan.id).map(item=>[dateFormat(item.date),money(item.amount),money(item.left)])} emptyText="Sin cuotas"/></div></details>)}
+        {reportLoanEntries(loans).map(({loan,number})=><details className="loan-accordion" key={loan.id}><summary><span>N.º {number} · {loan.person} · {frequencyNames[loan.frequency]} · {dateFormat(loan.first)}</span><strong>{remaining(loan)?`${money(remaining(loan))} pendiente`:'Pagado'}</strong></summary><div className="loan-accordion-body"><Table headers={['Vence','Cuota','Pendiente']} rows={schedule.filter(item=>item.loan.id===loan.id).map(item=>[dateFormat(item.date),money(item.amount),money(item.left)])} emptyText="Sin cuotas"/></div></details>)}
       </section>}
       {route==='respaldo'&&<section><h2>Respaldo</h2><p>Los datos se guardan en la base de datos del hosting. Puedes descargar una copia de respaldo.</p><button onClick={()=>download(`prestamos-${current}.json`,JSON.stringify(data,null,2),'application/json')}>Descargar copia</button><label>Restaurar una copia<input type="file" accept=".json,application/json" onChange={event=>{restore(event.target.files[0]);event.target.value='';}}/></label></section>}
       </>}

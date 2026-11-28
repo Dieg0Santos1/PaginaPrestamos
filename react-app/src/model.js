@@ -144,8 +144,11 @@ export function download(name, contents, type) {
 
 export const reportHeaders=['N.º','Cliente','Tipo','Frecuencia','Fecha de desembolso','Primera cuota','Número de cuotas','Monto prestado original (S/)','Capital o saldo inicial (S/)','Cuota (S/)','Total pactado (S/)','Abonos recibidos (S/)','Saldo pendiente (S/)','Cuotas vencidas (S/)','Estado'];
 function reportMoney(value){return (value/100).toFixed(2);}
+export function reportLoanEntries(loans){
+  return loans.map((loan,index)=>({loan,number:index+1})).reverse();
+}
 export function reportRows(loans,current){
-  return loans.map((loan,index)=>{
+  return reportLoanEntries(loans).map(({loan,number})=>{
     let paid=sum(loan.payments,p=>p.amount),overdue=0;
     for(let i=0;i<loan.count;i++){
       const unpaid=Math.max(loan.amount-paid,0);
@@ -153,7 +156,7 @@ export function reportRows(loans,current){
       if(due(loan.first,loan.frequency,i)<current) overdue+=unpaid;
     }
     const balance=remaining(loan);
-    return [index+1,loan.person,loan.type==='old'?'Saldo anterior':'Nuevo desembolso',
+    return [number,loan.person,loan.type==='old'?'Saldo anterior':'Nuevo desembolso',
       {week:'Semanal',fortnight:'Quincenal',month:'Mensual'}[loan.frequency],
       loan.issued||'',loan.first,loan.count,loan.originalPrincipal?reportMoney(loan.originalPrincipal):'',
       reportMoney(loan.principal),reportMoney(loan.amount),reportMoney(loan.amount*loan.count),
