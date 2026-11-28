@@ -167,7 +167,20 @@ try {
                 WHERE message_key=? AND status='pending'");
             $enqueuePayment = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
                 (message_key, kind, loan_id, message_text) VALUES (?, 'payment', ?, ?)");
+            $enqueueRenewal = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
+                (message_key, kind, loan_id) VALUES (?, 'renewal', ?)");
             $money = static fn (int $cents): string => 'S/ '.number_format($cents / 100, 2, '.', ',');
+            $balanceForPerson = static function (array $loans, string $person): int {
+                $total = 0;
+                foreach ($loans as $item) {
+                    if (($item->person ?? '') !== $person) continue;
+                    $left = (int) ($item->amount ?? 0) * (int) ($item->count ?? 0);
+                    foreach ($item->payments ?? [] as $paid) $left -= (int) ($paid->amount ?? 0);
+                    $total += max(0, $left);
+                }
+                return $total;
+            };
+            $renewalsQueued = [];
             foreach ($request->data->loans as $loanIndex=>$loan) {
                 if (!is_string($loan->id ?? null) || !isset($oldLoans[$loan->id])) continue;
                 $oldPayments = $oldLoans[$loan->id]->payments ?? [];
@@ -181,6 +194,7 @@ try {
                     if (!is_string($payment->id ?? null)) continue;
                     if (!isset($currentPayments[$payment->id]) || $currentPayments[$payment->id] != $payment) {
                         $cancelPayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id)]);
+                        $cancelPayment->execute([hash('sha256', 'renewal:'.$loan->id.':'.$payment->id)]);
                     }
                 }
                 if (empty($consented[$loan->person ?? '']) || count($newPayments) !== count($oldPayments) + 1) continue;
@@ -213,6 +227,12 @@ try {
                     : "\n\nNo quedan cuotas pendientes.";
                 $message .= "\nSaldo pendiente de todo el préstamo: ".$money($balance).'. Gracias.';
                 $enqueuePayment->execute([hash('sha256', 'payment:'.$loan->id.':'.$payment->id), $loan->id, $message]);
+                if (empty($renewalsQueued[$loan->person])
+                    && $balanceForPerson($oldData->loans ?? [], $loan->person) > 0
+                    && $balanceForPerson($request->data->loans, $loan->person) === 0) {
+                    $enqueueRenewal->execute([hash('sha256', 'renewal:'.$loan->id.':'.$payment->id), $loan->id]);
+                    $renewalsQueued[$loan->person] = true;
+                }
             }
         }
         $newAccessSecret = null;

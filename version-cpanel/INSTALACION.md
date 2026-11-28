@@ -25,7 +25,7 @@ Esta opción depende de que tu proveedor tenga habilitada la función Git Versio
 2. En cPanel, comprueba que el subdominio `prestamos.dadtvplay.com` tiene raíz propia en `public_html/prestamos` y HTTPS activo.
 3. En esa raíz, reemplaza `index.php` y sube `cliente.php`, `clientes-admin.php` y la carpeta **`react-dist` completa**. La estructura debe ser:
 
-   También puedes subir `../prestamos-react-clientes-cpanel.zip` a esa raíz y extraerlo allí; contiene exactamente esos archivos.
+   También puedes subir `../prestamos-react-cpanel.zip` a esa raíz y extraerlo allí; contiene exactamente esos archivos.
 
    ```text
    /home/usuario/
@@ -87,6 +87,8 @@ Esta aplicación puede usar **la misma sesión conectada** de WasenderAPI que ot
 5. En la ficha de cada cliente que aceptó avisos, registra su celular peruano y marca **«El cliente autorizó recibir avisos…»**. Los clientes existentes empiezan sin esta marca. El sistema no manda mensajes automáticos a clientes sin teléfono válido o sin autorización.
 
 Al crear un préstamo, se prepara un aviso y el cron lo envía en su siguiente ejecución. Al guardar un abono nuevo desde **Pagos** o al confirmar un comprobante de Yape, se prepara un mensaje con el monto y la fecha recibidos, cada cuota que falta por pagar con su saldo y el saldo total del préstamo. Para activar estos avisos, actualiza `index.php`, `clientes-admin.php` y el archivo privado `/home/USUARIO/prestamos-whatsapp-cron.php`. La tarea programada y la tabla `whatsapp_outbox` existentes siguen sirviendo. Si editas o eliminas un abono antes de que salga el comprobante, el aviso pendiente se cancela. El día de vencimiento, el cron prepara un recordatorio de cada cuota aún pendiente a partir de las **9:00 a. m., hora de Lima**. No se repiten avisos para la misma cuota. Restaurar un respaldo no vuelve a generar mensajes de creación ni de abonos.
+
+Cuando el saldo total de un cliente con préstamos pasa a S/ 0.00, aparece en **Clientes con saldo 0**, con las cancelaciones más recientes arriba. Si tiene autorización y celular válido, se coloca una invitación de renovación en la cola una sola vez por ese pago final. El cron comprueba otra vez que el saldo siga en cero antes de enviarla. Esta función también se activa cuando se confirma un comprobante de Yape. No requiere cambios en la base de datos.
 
 Si el cron antiguo dejó avisos de pago con estado `failed` y error `Tipo de aviso inválido`, reemplaza primero el archivo del cron. Después puedes reactivar solo el aviso más reciente desde phpMyAdmin, dentro de la base de préstamos: `UPDATE whatsapp_outbox SET status='pending', next_attempt_at=NOW(), last_error=NULL, claimed_at=NULL WHERE kind='payment' AND status='failed' AND last_error='Tipo de aviso inválido' ORDER BY id DESC LIMIT 1;`. El aviso falló antes de llegar a WasenderAPI y el cron actualizado lo procesará en su siguiente ejecución. Revisa los abonos anteriores antes de reactivar avisos más antiguos.
 

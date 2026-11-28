@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
-import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, monthlyLoanTotals, opening, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
+import {cash, cents, dateFormat, download, due, installmentWithInterest, installmentsOf, money, monthlyLoanTotals, opening, paidOffClients, paymentsOf, remaining, reportCsv, reportRows, sum, today, totalPaid, valid, validDate, validRate, whatsappNumber, withFriends} from './model.js';
 
 const empty = {loans:[], friends:[]};
 const key = 'mis-prestamos-v1';
@@ -283,6 +283,7 @@ export default function App() {
   const proofClient = proofConfirm ? friends.find(friend=>friend.dni===proofConfirm.proof.dni) : null;
   const schedule = useMemo(() => data ? installmentsOf(data) : [],[data]);
   const payments = useMemo(() => data ? paymentsOf(data) : [],[data]);
+  const settledClients = useMemo(() => data ? paidOffClients(data) : [],[data]);
   const newLoans = loans.filter(loan => loan.type === 'new');
   const chartYears = [...new Set([Number(current.slice(0,4)), ...newLoans.filter(loan=>validDate(loan.issued)).map(loan=>Number(loan.issued.slice(0,4)) )])].sort((a,b)=>b-a);
   const monthlyLoans = useMemo(() => monthlyLoanTotals(loans,chartYear),[loans,chartYear]);
@@ -454,7 +455,7 @@ export default function App() {
           <section><h2>Interés mensual</h2><form onSubmit={saveRate}><label>Tasa mensual (%)<input type="number" min="0" step=".01" value={rate} onChange={event=>setRate(event.target.value)}/></label><button disabled={saving}>Guardar tasa</button></form></section>
           <Metric label="Caja disponible + por cobrar" value={money(cash(data)+opening(data)+sum(loans,remaining))} detail="Suma de los dos saldos del panel"/></div>
         <MonthlyLoansChart rows={monthlyLoans} year={chartYear} years={chartYears} onYearChange={setChartYear}/>
-        <div className="dashboard-grid"><section><h2>Próximos vencimientos</h2><Table headers={['Vence','Cliente','Préstamo','Pendiente']} rows={schedule.filter(item=>item.left&&item.date>=current&&item.date<=weekEnd).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.left)])} emptyText="No hay vencimientos en los próximos 7 días."/></section><section><h2>Estado de cobros</h2><p>Cobrado: <strong>{money(sum(loans,totalPaid))}</strong></p><p>Pendiente registrado: <strong>{money(sum(loans,remaining))}</strong></p><p>Cuotas vencidas: <strong>{money(sum(overdue,item=>item.left))}</strong></p></section></div>
+        <div className="dashboard-grid"><section><h2>Próximos vencimientos</h2><Table headers={['Vence','Cliente','Préstamo','Pendiente']} rows={schedule.filter(item=>item.left&&item.date>=current&&item.date<=weekEnd).map(item=>[dateFormat(item.date),item.loan.person,item.reference,money(item.left)])} emptyText="No hay vencimientos en los próximos 7 días."/></section><section><h2>Clientes con saldo 0</h2><Table headers={['Cliente','Último pago','Acciones']} rows={settledClients.map(({friend,paidAt})=>[friend.person,dateFormat(paidAt),<button type="button" onClick={()=>setManagedClient(friend.person)}>Ver préstamos</button>])} emptyText="Todavía no hay clientes que hayan cancelado todos sus préstamos."/></section></div>
         <section><h2>Últimos pagos</h2><Table headers={['Fecha','Cliente','Préstamo','Abono']} rows={payments.filter(row=>row.payment.date>=weekStart&&row.payment.date<=current).map(row=>[dateFormat(row.payment.date),row.loan.person,row.reference,money(row.payment.amount)])} emptyText="No hay pagos en los últimos 7 días."/></section>
       </>}
       {route==='clientes'&&<section><div className="section-head"><h2>Registro de clientes</h2><div className="buttons">{friends.some(friend=>!friend.whatsappConsent)&&<button type="button" className="secondary" disabled={saving} onClick={authorizeAllClients}>Autorizar avisos a todos</button>}<button onClick={()=>{setShowClientPassword(false);setClientForm({previous:null,person:'',dni:'',phone:'',address:'',password:'',originalPassword:'',whatsappConsent:false});}}>Nuevo cliente</button></div></div>

@@ -5,6 +5,16 @@ export const dateFormat = value => value.split('-').reverse().join('/');
 export const sum = (items, value) => items.reduce((total, item) => total + value(item), 0);
 export const remaining = loan => loan.amount * loan.count - sum(loan.payments, payment => payment.amount);
 export const totalPaid = loan => sum(loan.payments, payment => payment.amount);
+export function paidOffClients(data) {
+  return (data.friends ?? []).flatMap(friend => {
+    const loans = data.loans.filter(loan => loan.person === friend.person);
+    if (!loans.length || loans.some(loan => remaining(loan) > 0)) return [];
+    const latest = loans.flatMap(loan => loan.payments)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || b.date.localeCompare(a.date))[0];
+    return latest ? [{friend, paidAt:latest.date, createdAt:latest.createdAt ?? 0}] : [];
+  }).sort((a, b) => b.createdAt - a.createdAt || b.paidAt.localeCompare(a.paidAt)
+    || a.friend.person.localeCompare(b.friend.person, 'es'));
+}
 export function monthlyLoanTotals(loans, year) {
   const months = Array.from({length:12}, (_, month) => ({month, capital:0, interest:0}));
   for (const loan of loans) {

@@ -203,6 +203,13 @@ try {
         $owners = array_values(array_filter($data['friends'] ?? [],
             static fn ($friend) => ($friend['dni'] ?? '') === $proof['dni']));
         if (count($owners) !== 1) $reject(409, 'El DNI del comprobante no identifica a un solo cliente.');
+        $clientBalanceBefore = 0;
+        foreach ($data['loans'] ?? [] as $candidate) {
+            if (($candidate['person'] ?? '') !== $owners[0]['person']) continue;
+            $left = (int) ($candidate['amount'] ?? 0) * (int) ($candidate['count'] ?? 0);
+            foreach ($candidate['payments'] ?? [] as $payment) $left -= (int) ($payment['amount'] ?? 0);
+            $clientBalanceBefore += max(0, $left);
+        }
         $loanIndex = null;
         foreach ($data['loans'] ?? [] as $index=>$loan) {
             if (($loan['id'] ?? '') === $proof['prestamo_id']
@@ -265,6 +272,11 @@ try {
                 $enqueue = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
                     (message_key, kind, loan_id, message_text) VALUES (?, 'payment', ?, ?)");
                 $enqueue->execute([hash('sha256', 'payment:'.$loan['id'].':'.$paymentId), $loan['id'], $message]);
+                if ($clientBalanceBefore > 0 && $clientBalanceBefore === $amount) {
+                    $enqueueRenewal = $db->prepare("INSERT IGNORE INTO whatsapp_outbox
+                        (message_key, kind, loan_id) VALUES (?, 'renewal', ?)");
+                    $enqueueRenewal->execute([hash('sha256', 'renewal:'.$loan['id'].':'.$paymentId), $loan['id']]);
+                }
             }
         }
         unset($loan);

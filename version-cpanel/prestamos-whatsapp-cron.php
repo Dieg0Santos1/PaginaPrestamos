@@ -171,6 +171,24 @@ try {
                     finish($db, (int) $job['id'], 'failed', null, null, 'Comprobante de abono vacío');
                     exit(1);
                 }
+            } elseif ($job['kind'] === 'renewal') {
+                $clientBalance = 0;
+                foreach ($loans as $candidate) {
+                    if (($candidate->person ?? '') !== $person) continue;
+                    $left = (int) ($candidate->amount ?? 0) * (int) ($candidate->count ?? 0);
+                    foreach ($candidate->payments ?? [] as $paid) $left -= (int) ($paid->amount ?? 0);
+                    $clientBalance += max(0, $left);
+                }
+                if ($clientBalance !== 0) {
+                    finish($db, (int) $job['id'], 'skipped', null, null, 'El cliente tiene saldo pendiente');
+                    exit(0);
+                }
+                $name = trim(str_replace('*', '', preg_replace('/[\r\n]+/', ' ', $person)));
+                $message = 'Hola *'.$name.'*, ¡felicitaciones! Terminaste de pagar tus préstamos y tu saldo pendiente es S/ 0.00.'
+                    ."\n\n¿Te gustaría renovar con un nuevo préstamo? Si te interesa, responde *QUIERO RENOVAR* "
+                    .'y dinos cuánto necesitas. Antes de confirmarlo te compartiremos el monto de cada cuota, '
+                    .'las fechas de pago y el total a devolver. Si prefieres esperar, no tienes que hacer nada. '
+                    .'¡Gracias por confiar en nosotros!';
             } else {
                 finish($db, (int) $job['id'], 'failed', null, null, 'Tipo de aviso inválido');
                 exit(1);
